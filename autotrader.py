@@ -12,7 +12,10 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 PM_KEY_ID = os.environ.get("PM_KEY_ID", "")
 PM_SECRET  = os.environ.get("PM_SECRET", "")
 NTFY_TOPIC = "wormypolymarket"
-BET_USD    = 5.0
+BET_USD          = 5.0
+MAX_BETS_PER_RUN = 3        # safety: never spend more than 3*BET_USD per cycle
+MIN_PROB         = 0.20     # skip near-locks (low ROI)
+MAX_PROB         = 0.60     # skip extreme underdogs
 
 TENNIS_TRADERS = [
     ("lovelystuff",  "0x65b54274eba5c76dee6f0fab18a590653811e82f"),
@@ -103,7 +106,7 @@ def get_smart_money_signals() -> list[dict]:
                 val  = float(p.get("currentValue", 0) or 0)
                 size = float(p.get("size", 0) or 0)
                 prob = val / size if size else 0
-                if prob < 0.05 or prob > 0.95:
+                if prob < MIN_PROB or prob > MAX_PROB:
                     continue
                 outcome = p.get("outcome", "")
                 key = f"{title}|{outcome}"
@@ -224,14 +227,20 @@ def check():
         print("  No Roland Garros smart money signals right now.")
         return
 
-    print(f"\n  {len(signals)} signal(s) from top traders:")
+    # Sort by prob — value bets first (lower prob = higher payout)
+    signals.sort(key=lambda s: s["prob"])
+
+    print(f"\n  {len(signals)} signal(s) from top traders (filtered {MIN_PROB:.0%}-{MAX_PROB:.0%}):")
     placed = 0
     for s in signals:
+        if placed >= MAX_BETS_PER_RUN:
+            print(f"\n  [stop] Hit MAX_BETS_PER_RUN ({MAX_BETS_PER_RUN}); skipping remaining signals.")
+            break
         print(f"\n  Signal: {s['player']} @ {s['prob']:.0%}  —  {s['title'][:60]}")
         if place_bet(s):
             placed += 1
 
-    print(f"\n  Done: {placed} new bet(s) placed this cycle.")
+    print(f"\n  Done: {placed} new bet(s) placed this cycle (max {MAX_BETS_PER_RUN}).")
 
 
 if __name__ == "__main__":
