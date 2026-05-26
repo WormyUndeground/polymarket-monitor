@@ -120,13 +120,51 @@ def get_smart_money_signals() -> list[dict]:
 
 # ── US market lookup ────────────────────────────────────────────────────────
 
+def get_us_market_by_slug(slug: str) -> dict | None:
+    """Fetch a single market on polymarket.us by slug (works for in-progress matches)."""
+    status, resp = _us_get(f"/v1/markets/{slug}")
+    if status == 200:
+        return resp.get("market", resp)
+    return None
+
+
 def search_us_market(player_name: str) -> dict | None:
     """
     Find an active tennis match on polymarket.us featuring player_name.
-    Returns market info with slug, price, intent; or None if not found.
+    Tries portfolio first (matches user already has), then search.
+    Returns market info with slug, price, intent; or None.
     """
-    last = player_name.split()[-1]   # use last name for search
-    url  = f"https://gateway.polymarket.us/v1/search?q={urllib.parse.quote(last)}&limit=100"
+    last = player_name.split()[-1]
+
+    # 1) Check user's existing portfolio for a market with this player
+    status, port = _us_get("/v1/portfolio/positions")
+    if status == 200:
+        for slug in (port.get("positions") or {}).keys():
+            if not ("atp" in slug or "wta" in slug):
+                continue
+            m = get_us_market_by_slug(slug)
+            if not m or m.get("closed"):
+                continue
+            sides = m.get("marketSides", [])
+            for side in sides:
+                if last.lower() in side.get("description", "").lower():
+                    price = float(side.get("price", 0))
+                    if 0.05 < price < 0.95:
+                        print(f"    Found in portfolio: {slug} @ {price:.0%}")
+                        intent = "ORDER_INTENT_BUY_LONG" if side["long"] else "ORDER_INTENT_BUY_SHORT"
+                        return {
+                            "slug": slug,
+                            "player": side["description"],
+                            "price": price,
+                            "intent": intent,
+                            "opponent": next(
+                                (s["description"] for s in sides if s["long"] != side["long"]), "?"
+                            ),
+                            "event_title": m.get("question", ""),
+                        }
+
+    # 2) Fall back to search for upcoming matches
+    url = f"https://gateway.polymarket.us/v1/search?q={urllib.parse.quote(last)}&limit=100"
     try:
         data = _fetch(url)
     except Exception as e:
