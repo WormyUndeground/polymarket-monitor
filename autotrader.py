@@ -6,8 +6,8 @@ Requires: PM_KEY_ID and PM_SECRET environment variables
 import os, base64, time, json, urllib.request, urllib.parse, sys
 from datetime import datetime
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 PM_KEY_ID = os.environ.get("PM_KEY_ID", "")
 PM_SECRET  = os.environ.get("PM_SECRET", "")
@@ -122,33 +122,39 @@ def get_smart_money_signals() -> list[dict]:
 
 def search_us_market(player_name: str) -> dict | None:
     """
-    Search polymarket.us for an active tennis match featuring player_name.
+    Find an active tennis match on polymarket.us featuring player_name.
     Returns market info with slug, price, intent; or None if not found.
     """
     last = player_name.split()[-1]   # use last name for search
-    url  = f"https://gateway.polymarket.us/v1/search?q={urllib.parse.quote(last)}&limit=20"
+    url  = f"https://gateway.polymarket.us/v1/search?q={urllib.parse.quote(last)}&limit=100"
     try:
         data = _fetch(url)
     except Exception as e:
         print(f"  [warn] US search failed: {e}")
         return None
 
-    now = datetime.utcnow()
-    for event in data.get("events", []):
-        if event.get("closed") or event.get("ended"):
-            continue
+    open_tennis = [
+        e for e in data.get("events", [])
+        if not e.get("closed") and not e.get("ended")
+        and ("atp" in e.get("slug", "") or "wta" in e.get("slug", ""))
+    ]
+    print(f"    Search returned {len(open_tennis)} open tennis events")
+
+    for event in open_tennis:
         for market in event.get("markets", []):
             if market.get("closed"):
                 continue
-            slug  = market.get("slug", "")
             sides = market.get("marketSides", [])
             for side in sides:
                 desc  = side.get("description", "")
                 price = float(side.get("price", 0))
-                if last.lower() in desc.lower() and 0.05 < price < 0.95:
+                if last.lower() in desc.lower():
+                    if not (0.05 < price < 0.95):
+                        print(f"    [skip] Found {desc} but price {price:.0%} is extreme")
+                        continue
                     intent = "ORDER_INTENT_BUY_LONG" if side["long"] else "ORDER_INTENT_BUY_SHORT"
                     return {
-                        "slug":        slug,
+                        "slug":        market.get("slug", ""),
                         "player":      desc,
                         "price":       price,
                         "intent":      intent,
