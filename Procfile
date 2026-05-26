@@ -1,1 +1,2 @@
-worker: python polymarket_monitor.py
+monitor: python polymarket_monitor.py
+trader: python autotrader.py
