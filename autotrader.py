@@ -255,16 +255,19 @@ if __name__ == "__main__":
         print("Example: $env:PM_KEY_ID='your-key-id'; $env:PM_SECRET='your-secret'")
         sys.exit(1)
 
-    # Quick auth check on startup
+    # Quick auth check on startup — try documented endpoint
     print("Polymarket US Auto-Trader starting...")
     print(f"Key: {PM_KEY_ID[:8]}...")
-    status, resp = _us_get("/v1/account")
-    if status == 200:
-        bal = resp.get("buyingPower", resp.get("balance", "?"))
-        print(f"Auth OK. Buying power: ${bal}")
+    print(f"Secret length: {len(PM_SECRET)} chars")
+
+    for path in ("/v1/portfolio/positions", "/v1/account", "/v1/account/balance", "/v1/portfolio/balance"):
+        status, resp = _us_get(path)
+        print(f"  GET {path} -> [{status}] {json.dumps(resp)[:200]}")
+        if status == 200:
+            print(f"Auth OK via {path}")
+            break
     else:
-        print(f"Auth check failed [{status}]: {resp}")
-        print("Check your PM_KEY_ID and PM_SECRET. Continuing anyway...")
+        print("All auth endpoints failed. Continuing anyway to run trade loop...")
     print()
 
     while True:
