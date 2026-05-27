@@ -152,8 +152,10 @@ def fetch_all_rg_matches() -> list[dict]:
 
 
 def find_player_in_matches(player_name: str, matches: list[dict]) -> dict | None:
-    """Look up player_name across the pre-fetched RG match list."""
-    last = player_name.split()[-1].lower()
+    """Look up player_name across the pre-fetched tennis match list."""
+    target = player_name.lower().strip()
+    parts  = target.split()
+    last   = parts[-1] if parts else target
     for event in matches:
         for market in event.get("markets", []):
             if market.get("closed"):
@@ -161,7 +163,9 @@ def find_player_in_matches(player_name: str, matches: list[dict]) -> dict | None
             sides = market.get("marketSides", [])
             for side in sides:
                 desc = side.get("description", "").lower()
-                if last in desc:
+                # Require last name AND first-name-initial match to avoid Xiyu/Xinyu Wang etc.
+                first_initial_ok = (not parts or parts[0][:1] in desc)
+                if last in desc and first_initial_ok:
                     price = float(side.get("price", 0))
                     if not (0.05 < price < 0.95):
                         print(f"    [skip] Found {side['description']} but price {price:.0%} is extreme")
@@ -202,14 +206,17 @@ def place_bet(signal: dict, matches: list[dict]) -> bool:
         print(f"  [skip] Already bet on {slug}")
         return False
 
-    price    = market["price"]
-    quantity = round(BET_USD / price, 4)
-    profit   = round(quantity - BET_USD, 2)
+    # Bid 2 cents above market so the limit order actually crosses and fills
+    market_price = market["price"]
+    bid_price    = min(round(market_price + 0.02, 2), 0.95)
+    quantity     = round(BET_USD / bid_price, 4)
+    profit       = round(quantity - BET_USD, 2)
+    price        = bid_price
 
     body = {
         "marketSlug": slug,
         "type":       "ORDER_TYPE_LIMIT",
-        "price":      {"value": f"{price:.3f}", "currency": "USD"},
+        "price":      {"value": f"{bid_price:.3f}", "currency": "USD"},
         "quantity":   quantity,
         "tif":        "GTC",
         "intent":     market["intent"],
@@ -223,22 +230,26 @@ def place_bet(signal: dict, matches: list[dict]) -> bool:
     status, resp = _us_post("/v1/orders", body)
     print(f"  Response [{status}]: {json.dumps(resp)[:300]}")
 
-    if status in (200, 201) and resp.get("orderId"):
+    order_id = resp.get("id") or resp.get("orderId")
+    if status in (200, 201) and order_id:
         placed_bets[slug] = {
-            "orderId":  resp["orderId"],
+            "orderId":  order_id,
             "player":   player,
             "price":    price,
             "quantity": quantity,
             "placed_at": datetime.now().isoformat(),
         }
+        filled = bool(resp.get("executions"))
+        status_msg = "FILLED" if filled else "RESTING on book"
         notify(
             f"Bet placed: {player}",
             f"${BET_USD} on {player} vs {market['opponent']} @ {price:.0%}\n"
-            f"Wins ${profit:.2f} if correct\n{market['event_title']}"
+            f"Wins ${profit:.2f} if correct ({status_msg})\n{market['event_title']}"
         )
+        print(f"  Order accepted: {order_id} | {status_msg}")
         return True
     else:
-        print(f"  [error] Order failed: {resp}")
+        print(f"  [error] Order rejected: {resp}")
         return False
 
 
