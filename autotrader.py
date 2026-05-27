@@ -128,72 +128,52 @@ def get_us_market_by_slug(slug: str) -> dict | None:
     return None
 
 
-def search_us_market(player_name: str) -> dict | None:
-    """
-    Find an active tennis match on polymarket.us featuring player_name.
-    Tries portfolio first (matches user already has), then search.
-    Returns market info with slug, price, intent; or None.
-    """
-    last = player_name.split()[-1]
-
-    # 1) Check user's existing portfolio for a market with this player
-    status, port = _us_get("/v1/portfolio/positions")
-    if status == 200:
-        for slug in (port.get("positions") or {}).keys():
+def fetch_all_rg_matches() -> list[dict]:
+    """Fetch every active Roland Garros tennis match on polymarket.us once per cycle."""
+    matches = []
+    for query in ("Roland Garros", "French Open"):
+        url = f"https://gateway.polymarket.us/v1/search?q={urllib.parse.quote(query)}&limit=200"
+        try:
+            data = _fetch(url)
+        except Exception as e:
+            print(f"  [warn] US search failed for '{query}': {e}")
+            continue
+        for event in data.get("events", []):
+            slug = event.get("slug", "")
+            if event.get("closed") or event.get("ended"):
+                continue
             if not ("atp" in slug or "wta" in slug):
                 continue
-            m = get_us_market_by_slug(slug)
-            if not m or m.get("closed"):
-                continue
-            sides = m.get("marketSides", [])
-            for side in sides:
-                if last.lower() in side.get("description", "").lower():
-                    price = float(side.get("price", 0))
-                    if 0.05 < price < 0.95:
-                        print(f"    Found in portfolio: {slug} @ {price:.0%}")
-                        intent = "ORDER_INTENT_BUY_LONG" if side["long"] else "ORDER_INTENT_BUY_SHORT"
-                        return {
-                            "slug": slug,
-                            "player": side["description"],
-                            "price": price,
-                            "intent": intent,
-                            "opponent": next(
-                                (s["description"] for s in sides if s["long"] != side["long"]), "?"
-                            ),
-                            "event_title": m.get("question", ""),
-                        }
+            matches.append(event)
+    # Dedupe by event slug
+    seen = set()
+    unique = []
+    for e in matches:
+        if e["slug"] not in seen:
+            seen.add(e["slug"])
+            unique.append(e)
+    return unique
 
-    # 2) Fall back to search for upcoming matches
-    url = f"https://gateway.polymarket.us/v1/search?q={urllib.parse.quote(last)}&limit=100"
-    try:
-        data = _fetch(url)
-    except Exception as e:
-        print(f"  [warn] US search failed: {e}")
-        return None
 
-    open_tennis = [
-        e for e in data.get("events", [])
-        if not e.get("closed") and not e.get("ended")
-        and ("atp" in e.get("slug", "") or "wta" in e.get("slug", ""))
-    ]
-    print(f"    Search returned {len(open_tennis)} open tennis events")
-
-    for event in open_tennis:
+def find_player_in_matches(player_name: str, matches: list[dict]) -> dict | None:
+    """Look up player_name across the pre-fetched RG match list."""
+    last = player_name.split()[-1].lower()
+    for event in matches:
         for market in event.get("markets", []):
             if market.get("closed"):
                 continue
             sides = market.get("marketSides", [])
             for side in sides:
-                desc  = side.get("description", "")
-                price = float(side.get("price", 0))
-                if last.lower() in desc.lower():
+                desc = side.get("description", "").lower()
+                if last in desc:
+                    price = float(side.get("price", 0))
                     if not (0.05 < price < 0.95):
-                        print(f"    [skip] Found {desc} but price {price:.0%} is extreme")
+                        print(f"    [skip] Found {side['description']} but price {price:.0%} is extreme")
                         continue
                     intent = "ORDER_INTENT_BUY_LONG" if side["long"] else "ORDER_INTENT_BUY_SHORT"
                     return {
                         "slug":        market.get("slug", ""),
-                        "player":      desc,
+                        "player":      side["description"],
                         "price":       price,
                         "intent":      intent,
                         "opponent":    next(
@@ -204,11 +184,18 @@ def search_us_market(player_name: str) -> dict | None:
     return None
 
 
+def search_us_market(player_name: str, matches: list[dict] | None = None) -> dict | None:
+    """Find an active PMUS market featuring player_name."""
+    if matches is None:
+        matches = fetch_all_rg_matches()
+    return find_player_in_matches(player_name, matches)
+
+
 # ── order placement ─────────────────────────────────────────────────────────
 
-def place_bet(signal: dict) -> bool:
+def place_bet(signal: dict, matches: list[dict]) -> bool:
     player = signal["player"]
-    market = search_us_market(player)
+    market = search_us_market(player, matches)
 
     if not market:
         print(f"  [skip] No active US market found for '{player}'")
@@ -274,6 +261,13 @@ def check():
     # Sort by prob — value bets first (lower prob = higher payout)
     signals.sort(key=lambda s: s["prob"])
 
+    # Fetch the RG market universe once per cycle (not per signal)
+    matches = fetch_all_rg_matches()
+    print(f"\n  Fetched {len(matches)} active RG matches on Polymarket US")
+    if matches:
+        sample = ", ".join(e.get("title", "?")[:25] for e in matches[:3])
+        print(f"  Sample: {sample}...")
+
     print(f"\n  {len(signals)} signal(s) from top traders (filtered {MIN_PROB:.0%}-{MAX_PROB:.0%}):")
     placed = 0
     for s in signals:
@@ -281,7 +275,7 @@ def check():
             print(f"\n  [stop] Hit MAX_BETS_PER_RUN ({MAX_BETS_PER_RUN}); skipping remaining signals.")
             break
         print(f"\n  Signal: {s['player']} @ {s['prob']:.0%}  —  {s['title'][:60]}")
-        if place_bet(s):
+        if place_bet(s, matches):
             placed += 1
 
     print(f"\n  Done: {placed} new bet(s) placed this cycle (max {MAX_BETS_PER_RUN}).")
