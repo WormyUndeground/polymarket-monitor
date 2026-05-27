@@ -129,22 +129,24 @@ def get_us_market_by_slug(slug: str) -> dict | None:
 
 
 def fetch_all_rg_matches() -> list[dict]:
-    """Fetch every active Roland Garros tennis match on polymarket.us once per cycle."""
+    """Fetch every active Roland Garros tennis match on polymarket.us. Retries on empty/error."""
     matches = []
-    for query in ("Roland Garros", "French Open"):
+    for query in ("Roland Garros", "French Open", "tennis"):
         url = f"https://gateway.polymarket.us/v1/search?q={urllib.parse.quote(query)}&limit=200"
-        try:
-            data = _fetch(url)
-        except Exception as e:
-            print(f"  [warn] US search failed for '{query}': {e}")
-            continue
-        for event in data.get("events", []):
-            slug = event.get("slug", "")
-            if event.get("closed") or event.get("ended"):
-                continue
-            if not ("atp" in slug or "wta" in slug):
-                continue
-            matches.append(event)
+        for attempt in range(3):
+            try:
+                data = _fetch(url)
+                for event in data.get("events", []):
+                    slug = event.get("slug", "")
+                    if event.get("closed") or event.get("ended"):
+                        continue
+                    if not ("atp" in slug or "wta" in slug):
+                        continue
+                    matches.append(event)
+                break
+            except Exception as e:
+                print(f"  [warn] US search '{query}' attempt {attempt+1}/3 failed: {e}")
+                time.sleep(2)
     # Dedupe by event slug
     seen = set()
     unique = []
@@ -152,6 +154,8 @@ def fetch_all_rg_matches() -> list[dict]:
         if e["slug"] not in seen:
             seen.add(e["slug"])
             unique.append(e)
+    if not unique:
+        print(f"  [error] Could not fetch any RG matches this cycle — search may be down")
     return unique
 
 
