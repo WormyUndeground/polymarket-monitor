@@ -263,10 +263,9 @@ def check():
 
     # Fetch the RG market universe once per cycle (not per signal)
     matches = fetch_all_rg_matches()
-    print(f"\n  Fetched {len(matches)} active RG matches on Polymarket US")
-    if matches:
-        sample = ", ".join(e.get("title", "?")[:25] for e in matches[:3])
-        print(f"  Sample: {sample}...")
+    print(f"\n  Fetched {len(matches)} active RG matches on Polymarket US:")
+    for e in matches:
+        print(f"    - {e.get('title','?')[:70]}")
 
     print(f"\n  {len(signals)} signal(s) from top traders (filtered {MIN_PROB:.0%}-{MAX_PROB:.0%}):")
     placed = 0
