@@ -34,18 +34,8 @@ def fetch(url):
 
 
 def phone_notify(title, message):
-    try:
-        data = json.dumps({"topic": NTFY_TOPIC, "title": title, "message": message}).encode()
-        req = urllib.request.Request(
-            "https://ntfy.sh",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=10)
-        print("  *** Phone notification sent ***")
-    except Exception as e:
-        print(f"  [warn] ntfy failed: {e}")
+    # Disabled (Option A): notifications now come only from autotrader.py on real bets.
+    print(f"  [monitor notify disabled] {title}")
 
 
 def get_markets_from_traders():
