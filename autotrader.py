@@ -50,6 +50,11 @@ def conviction_cap(n_holders: int) -> float:
             return cap
     return MIN_BET_USD
 
+# Fresh-buy window: only count traders who *bought* a side within this many hours,
+# not anyone still holding a stale/underwater position. 79% of the pool's RG buys
+# land within 24h, so this captures pre-match conviction while dropping old bags.
+FRESH_BUY_HOURS = float(os.environ.get("FRESH_BUY_HOURS", "24"))
+
 
 def kelly_bet_size(p_pro: float, market_price: float) -> float:
     """Quarter-Kelly fraction of bankroll, given pro-implied probability and market price.
@@ -293,31 +298,36 @@ def notify(title: str, msg: str):
 # ── signal detection ────────────────────────────────────────────────────────
 
 def get_smart_money_signals() -> list[dict]:
-    """Aggregate positions across the elite traders. Returns one signal per
-    (match, player) with holder count, total $ size, and median probability."""
+    """Aggregate *recent buys* across the elite traders. Returns one signal per
+    (match, player) with holder count, fresh-buy $ volume, and the median price the
+    smart money actually paid (used as the pro-probability for the edge calc)."""
     raw_by_key: dict[str, dict] = {}
+    cutoff = time.time() - FRESH_BUY_HOURS * 3600
     for name, wallet in TENNIS_TRADERS:
         try:
-            url = f"https://data-api.polymarket.com/positions?user={wallet}&limit=50"
-            for p in _fetch(url):
-                title = p.get("title", "")
+            url = f"https://data-api.polymarket.com/activity?user={wallet}&limit=500"
+            for r in _fetch(url):
+                if r.get("type") != "TRADE" or r.get("side") != "BUY":
+                    continue
+                title = r.get("title", "")
                 if not any(k.lower() in title.lower() for k in KEYWORDS):
                     continue
-                val  = float(p.get("currentValue", 0) or 0)
-                size = float(p.get("size", 0) or 0)
-                prob = val / size if size else 0
-                if prob < MIN_PROB or prob > MAX_PROB:
+                if (r.get("timestamp", 0) or 0) < cutoff:
                     continue
-                outcome = p.get("outcome", "")
+                price = float(r.get("price", 0) or 0)
+                if price < MIN_PROB or price > MAX_PROB:
+                    continue
+                outcome = r.get("outcome", "")
+                usd     = float(r.get("usdcSize", 0) or 0)
                 key = f"{title}|{outcome}"
                 entry = raw_by_key.setdefault(key, {
                     "player": outcome, "title": title,
-                    "holders": [], "probs": [], "total_size": 0.0,
+                    "holders": [], "prices": [], "total_size": 0.0,
                 })
-                if name not in entry["holders"]:
+                entry["total_size"] += usd        # all fresh $ deployed (incl. scale-ins)
+                entry["prices"].append(price)
+                if name not in entry["holders"]:  # but count each trader once
                     entry["holders"].append(name)
-                    entry["probs"].append(prob)
-                    entry["total_size"] += val
         except Exception as e:
             print(f"  [warn] fetch {name}: {e}")
 
@@ -329,11 +339,11 @@ def get_smart_money_signals() -> list[dict]:
             continue
         if entry["total_size"] < MIN_TOTAL_SIZE:
             continue
-        probs = sorted(entry["probs"])
-        median_prob = probs[len(probs)//2]
+        prices = sorted(entry["prices"])
+        median_price = prices[len(prices)//2]
         signals.append({
             "player": entry["player"],
-            "prob": median_prob,
+            "prob": median_price,
             "title": entry["title"],
             "holders": entry["holders"],
             "total_size": entry["total_size"],
