@@ -171,6 +171,54 @@ def load_trade_log():
         return []
 
 
+def _live_params():
+    """Pull the active gate values straight from autotrader so this eval never drifts
+    from what the bot actually enforces. Falls back to the known defaults if import fails."""
+    try:
+        import autotrader as a
+        return {
+            "MIN_HOLDERS":    a.MIN_HOLDERS,
+            "MIN_TOTAL_SIZE": a.MIN_TOTAL_SIZE,
+            "MIN_PROB":       a.MIN_PROB,
+            "MAX_PROB":       a.MAX_PROB,
+            "MIN_BET_USD":    a.MIN_BET_USD,
+            "MAX_BET_USD":    a.MAX_BET_USD,
+        }
+    except Exception:
+        return {
+            "MIN_HOLDERS": 2, "MIN_TOTAL_SIZE": 5000.0,
+            "MIN_PROB": 0.20, "MAX_PROB": 0.60,
+            "MIN_BET_USD": 5.0, "MAX_BET_USD": 15.0,
+        }
+
+
+def eval_compliance(trades):
+    """Audit each logged bet against the live gates. Returns (n_pass, n_total, violations)
+    where violations is a list of (trade, [reason, ...])."""
+    p = _live_params()
+    violations = []
+    for t in trades:
+        reasons = []
+        holders = t.get("holders_count", 0) or 0
+        money   = float(t.get("smart_money", 0) or 0)
+        price   = float(t.get("bid_price", 0) or 0)
+        size    = float(t.get("bet_size", 0) or 0)
+        edge    = float(t.get("edge_pct", 0) or 0)
+        if holders < p["MIN_HOLDERS"]:
+            reasons.append(f"only {holders} pros (need ≥{p['MIN_HOLDERS']})")
+        if money < p["MIN_TOTAL_SIZE"]:
+            reasons.append(f"${money:,.0f} smart money (need ≥${p['MIN_TOTAL_SIZE']:,.0f})")
+        if not (p["MIN_PROB"] <= price <= p["MAX_PROB"]):
+            reasons.append(f"price {price:.0%} outside {p['MIN_PROB']:.0%}–{p['MAX_PROB']:.0%}")
+        if not (p["MIN_BET_USD"] <= size <= p["MAX_BET_USD"]):
+            reasons.append(f"bet ${size:.2f} outside ${p['MIN_BET_USD']:.0f}–${p['MAX_BET_USD']:.0f}")
+        if edge <= 0:
+            reasons.append(f"edge {edge:+.1f}pp not positive")
+        if reasons:
+            violations.append((t, reasons))
+    return len(trades) - len(violations), len(trades), violations
+
+
 def load_manual_history():
     if not os.path.exists(MANUAL_HISTORY):
         return []
@@ -278,6 +326,33 @@ def render_html(state):
     else:
         trades_html = "<tr><td colspan='6' style='text-align:center;color:#64748b'>No bot trades logged yet</td></tr>"
 
+    n_pass, n_total, violations = eval_compliance(trades)
+    if n_total == 0:
+        compliance_html = (
+            "<div class='card'><div class='label'>Parameter Compliance</div>"
+            "<div class='value' style='color:#64748b'>No bets to audit yet</div></div>"
+        )
+    elif not violations:
+        compliance_html = (
+            "<div class='card'><div class='label'>Parameter Compliance</div>"
+            f"<div class='value' style='color:#22c55e'>✓ {n_pass}/{n_total} in bounds</div>"
+            "<div style='font-size:11px;color:#64748b;margin-top:4px'>"
+            "every logged bet passed all gates</div></div>"
+        )
+    else:
+        viol_rows = ""
+        for t, reasons in reversed(violations[-20:]):
+            viol_rows += (
+                "<div style='font-size:12px;color:#fca5a5;margin-top:6px'>"
+                f"<b>{t.get('player','?')}</b> ({t.get('ts','')[:16]}): "
+                + "; ".join(reasons) + "</div>"
+            )
+        compliance_html = (
+            "<div class='card'><div class='label'>Parameter Compliance</div>"
+            f"<div class='value' style='color:#ef4444'>⚠ {len(violations)}/{n_total} out of bounds</div>"
+            + viol_rows + "</div>"
+        )
+
     return f"""<!DOCTYPE html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -331,6 +406,9 @@ def render_html(state):
   <tr><th>Date</th><th>Player</th><th>Match</th><th>Cost</th><th>Result</th><th>P&L</th></tr>
   {hist_html}
 </table>
+
+<h2>PARAMETER COMPLIANCE</h2>
+{compliance_html}
 
 <h2>BOT TRADE LOG ({len(trades)})</h2>
 <table>
