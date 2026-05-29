@@ -5,7 +5,7 @@
     "match": "Kokkinakis vs. Terence Atmane (R1)",
     "cost": "$4.78",
     "result": "WON",
-    "pnl": 20.00
+    "pnl": 15.22
   },
   {
     "date": "2026-05-26",
@@ -21,7 +21,7 @@
     "match": "Kopriva vs. Corentin Moutet",
     "cost": "$4.82",
     "result": "WON",
-    "pnl": 12.00
+    "pnl": 7.18
   },
   {
     "date": "2026-05-28",
@@ -29,7 +29,7 @@
     "match": "Fonseca vs. Dino Prizmic",
     "cost": "$4.61",
     "result": "WON",
-    "pnl": 9.00
+    "pnl": 4.39
   },
   {
     "date": "2026-05-28",
@@ -37,7 +37,7 @@
     "match": "Davidovich Fokina vs. Tirante",
     "cost": "$2.15",
     "result": "WON",
-    "pnl": 7.00
+    "pnl": 4.85
   },
   {
     "date": "2026-05-28",
@@ -45,7 +45,7 @@
     "match": "Korpatsch vs. Xinyu Wang",
     "cost": "$4.46",
     "result": "WON",
-    "pnl": 7.00
+    "pnl": 2.54
   },
   {
     "date": "2026-05-28",
@@ -53,7 +53,7 @@
     "match": "Mariano Navone vs. Mensik",
     "cost": "$4.97",
     "result": "WON",
-    "pnl": 10.00
+    "pnl": 5.03
   },
   {
     "date": "2026-05-28",
@@ -61,7 +61,7 @@
     "match": "Borges vs. Miomir Kecmanovic",
     "cost": "$4.82",
     "result": "WON",
-    "pnl": 12.00
+    "pnl": 7.18
   },
   {
     "date": "2026-05-28",
@@ -69,7 +69,7 @@
     "match": "Jasmine Paolini vs. Sierra",
     "cost": "$3.02",
     "result": "WON",
-    "pnl": 8.00
+    "pnl": 4.98
   },
   {
     "date": "2026-05-28",
@@ -77,7 +77,7 @@
     "match": "Teichmann vs. Magdalena Frech",
     "cost": "$4.92",
     "result": "WON",
-    "pnl": 11.00
+    "pnl": 6.08
   },
   {
     "date": "2026-05-28",
@@ -109,7 +109,7 @@
     "match": "Jelena Ostapenko vs. Linette",
     "cost": "$2.43",
     "result": "WON",
-    "pnl": 7.00
+    "pnl": 4.57
   },
   {
     "date": "2026-05-28",
@@ -133,15 +133,15 @@
     "match": "Svajda vs. Adam Walton",
     "cost": "$4.50",
     "result": "WON",
-    "pnl": 8.00
+    "pnl": 3.50
   },
   {
     "date": "2026-05-28",
     "player": "Alejandro Tabilo",
     "match": "Tabilo vs. Valentin Vacherot",
     "cost": "$4.63",
-    "result": "WON",
-    "pnl": 4.48
+    "result": "RESOLVED",
+    "pnl": -0.15
   },
   {
     "date": "2026-05-28",
@@ -165,7 +165,7 @@
     "match": "Adolfo Vallejo vs. Kouame",
     "cost": "$1.19",
     "result": "WON",
-    "pnl": 6.00
+    "pnl": 4.81
   },
   {
     "date": "2026-05-28",
@@ -173,7 +173,7 @@
     "match": "Chwalinska vs. Elise Mertens",
     "cost": "$4.78",
     "result": "WON",
-    "pnl": 21.00
+    "pnl": 16.22
   },
   {
     "date": "2026-05-28",
@@ -205,7 +205,7 @@
     "match": "Landaluce vs. Vit Kopriva",
     "cost": "$4.96",
     "result": "WON",
-    "pnl": 13.00
+    "pnl": 8.04
   },
   {
     "date": "2026-05-28",
@@ -253,7 +253,7 @@
     "match": "Arthur Rinderknech vs. Berrettini",
     "cost": "$3.42",
     "result": "WON",
-    "pnl": 8.00
+    "pnl": 4.58
   },
   {
     "date": "2026-05-28",
@@ -269,7 +269,7 @@
     "match": "Collignon vs. Ben Shelton",
     "cost": "$4.96",
     "result": "WON",
-    "pnl": 15.00
+    "pnl": 10.04
   },
   {
     "date": "2026-05-28",
@@ -285,6 +285,6 @@
     "match": "Comesana vs. Luciano Darderi",
     "cost": "$4.61",
     "result": "WON",
-    "pnl": 9.00
+    "pnl": 4.39
   }
 ]
