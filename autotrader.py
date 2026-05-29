@@ -44,11 +44,28 @@ def kelly_bet_size(p_pro: float, market_price: float) -> float:
     return round(raw, 2)
 
 TENNIS_TRADERS = [
+    # original active anchors
     ("swisstony",       "0x204f72f35326db932158cba6adff0b9a1da95e14"),
     ("anon18",          "0x5966db1fe50763c9e3c014d756369bad07e1f804"),
     ("HomeRunHazard",   "0x5268527977f700f9bf9b6d5cd843859e4e70135d"),
     ("ferrariChampions","0xfe787d2da716d60e8acff57fb87eb13cd4d10319"),
     ("strike123",       "0xf284ad6d607f777f34bc643cea587c33a886b9f9"),
+    # 15 added — active tennis traders, recurring co-holders with the anchors
+    ("RN1",             "0x2005d16a84ceefa912d4e380cd32e7ff827875ea"),
+    ("mooseborzoi",     "0x84cfffc3f16dcc353094de30d4a45226eccd2f63"),
+    ("degenfren",       "0x979fc186184ae75754d32c4ef68d8ca00f744032"),
+    ("SpaceEx",         "0xa16a1302ca05463f30faebeb5c045767fde233a1"),
+    ("anon5375",        "0x53757615de1c42b83f893b79d4241a009dc2aeea"),
+    ("LYnetLY",         "0x1eaf5d5f822dc5211c25b5839e5b7aa70f319bf0"),
+    ("tradecraft",      "0xde9f7f4e77a1595623ceb58e469f776257ccd43c"),
+    ("benwyatt",        "0x1117eade222413335b7ec959e5b48c1d3dbc3532"),
+    ("sentrio",         "0xdb83e85ffd22faa4009273034770f96ffc5b1e50"),
+    ("NewTeamSosed4",   "0x437961a3b2684a4835da753e894d4b5cffdb2e16"),
+    ("KnightDasCapital","0xadfb6cba33cebca02eab6111ace1e3924b9cc2ef"),
+    ("anonE907",        "0xe9076a87c5ed90ef16e6fe6529c943baeca0cff6"),
+    ("mwenya",          "0xde0463ea7f611b065e8ab06bbfbddad75e6dfa37"),
+    ("LBAIsport",       "0xcb1bcdee78e4b50e64aabb109cf4be33dbb569f2"),
+    ("cigarettes",      "0xd218e474776403a330142299f7796e8ba32eb5c9"),
 ]
 KEYWORDS    = ["Roland Garros", "Roland-Garros", "French Open"]
 MOBILE_UA   = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"
