@@ -55,6 +55,11 @@ def conviction_cap(n_holders: int) -> float:
 # land within 24h, so this captures pre-match conviction while dropping old bags.
 FRESH_BUY_HOURS = float(os.environ.get("FRESH_BUY_HOURS", "24"))
 
+# Dry-run mode: run the full pipeline (signals, guards, opponent check, sizing,
+# build the real order body) but DON'T submit the order — just log what it would do.
+# Flip on with DRY_RUN=1 to test a live cycle without risking money.
+DRY_RUN = os.environ.get("DRY_RUN", "").strip() in ("1", "true", "True", "yes")
+
 
 def kelly_bet_size(p_pro: float, market_price: float) -> float:
     """Quarter-Kelly fraction of bankroll, given pro-implied probability and market price.
@@ -517,6 +522,11 @@ def place_bet(signal: dict, matches: list[dict], budget_left: float | None = Non
     print(f"  Market: {slug}  |  Intent: {market['intent']}")
     print(f"  Quantity: {quantity} shares  |  Potential profit: ${profit}")
 
+    if DRY_RUN:
+        print(f"  [DRY RUN] WOULD place ${bet_size:.2f} on {player} vs {market['opponent']} "
+              f"@ {bid_price:.0%} ({quantity} shares, profit ${profit}) — no order submitted")
+        return bet_size
+
     status, resp = _us_post("/v1/orders", body)
     print(f"  Response [{status}]: {json.dumps(resp)[:300]}")
 
@@ -650,6 +660,8 @@ if __name__ == "__main__":
     print(f"Key: {PM_KEY_ID[:8]}...")
     print(f"Secret length: {len(PM_SECRET)} chars")
     print(f"Bankroll: ${BANKROLL_USD:.2f}")
+    if DRY_RUN:
+        print("*** DRY RUN MODE — no real orders will be placed ***")
     print(f"Trade log path: {TRADE_LOG}  (/data volume mounted: {os.path.isdir('/data')})")
 
     # Spin up the dashboard HTTP server FIRST, in a background thread, so the
