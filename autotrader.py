@@ -402,6 +402,8 @@ if __name__ == "__main__":
     print("Polymarket US Auto-Trader starting...")
     print(f"Key: {PM_KEY_ID[:8]}...")
     print(f"Secret length: {len(PM_SECRET)} chars")
+    print(f"Bankroll: ${BANKROLL_USD:.2f}")
+    print(f"Trade log path: {TRADE_LOG}  (/data volume mounted: {os.path.isdir('/data')})")
 
     # Spin up the dashboard HTTP server FIRST, in a background thread, so the
     # web port binds immediately and Railway sees a responsive app. It shares
