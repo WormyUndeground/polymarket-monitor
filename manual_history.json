@@ -286,5 +286,13 @@
     "cost": "$4.61",
     "result": "WON",
     "pnl": 4.39
+  },
+  {
+    "date": "2026-05-29",
+    "player": "Nuno Borges",
+    "match": "Borges vs. Andrey Rublev",
+    "cost": "$4.93",
+    "result": "LOST",
+    "pnl": -4.93
   }
 ]
