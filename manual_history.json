@@ -1,0 +1,50 @@
+[
+  {
+    "date": "2026-05-25",
+    "player": "Thanasi Kokkinakis",
+    "match": "Roland Garros R1",
+    "cost": "$5.00",
+    "result": "WON",
+    "pnl": 20.00
+  },
+  {
+    "date": "2026-05-25",
+    "player": "Stan Wawrinka",
+    "match": "Roland Garros R1",
+    "cost": "$5.00",
+    "result": "LOST",
+    "pnl": -4.99
+  },
+  {
+    "date": "2026-05-26",
+    "player": "Vit Kopriva",
+    "match": "Kopriva vs. Moutet",
+    "cost": "$4.82",
+    "result": "LOST",
+    "pnl": -4.82
+  },
+  {
+    "date": "2026-05-27",
+    "player": "Stefanos Tsitsipas",
+    "match": "Arnaldi vs. Tsitsipas",
+    "cost": "$8.06",
+    "result": "LOST",
+    "pnl": -8.06
+  },
+  {
+    "date": "2026-05-27",
+    "player": "Luca Van Assche",
+    "match": "Van Assche vs. Nakashima",
+    "cost": "$4.66",
+    "result": "LOST",
+    "pnl": -4.66
+  },
+  {
+    "date": "2026-05-27",
+    "player": "Matteo Berrettini",
+    "match": "Rinderknech vs. Berrettini",
+    "cost": "$5.00",
+    "result": "WON",
+    "pnl": 8.00
+  }
+]

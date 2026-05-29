@@ -17,7 +17,8 @@ MOBILE_UA = "Mozilla/5.0 (iPhone)"
 _price_cache: dict = {}
 _events_cache: dict = {"data": None, "ts": 0}
 _CACHE_TTL = 60
-TRADE_LOG = os.environ.get("TRADE_LOG", "trades.json")
+TRADE_LOG       = os.environ.get("TRADE_LOG", "trades.json")
+MANUAL_HISTORY  = os.environ.get("MANUAL_HISTORY", "manual_history.json")
 
 
 def _auth_headers(method, path):
@@ -169,6 +170,16 @@ def load_trade_log():
         return []
 
 
+def load_manual_history():
+    if not os.path.exists(MANUAL_HISTORY):
+        return []
+    try:
+        with open(MANUAL_HISTORY) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
 def render_html(state):
     if not state:
         return "<html><body><h1>Failed to load portfolio</h1></body></html>"
@@ -193,6 +204,43 @@ def render_html(state):
             f"<td style='color:{c}'>{s}{r['roi']:.1f}%</td>"
             f"</tr>"
         )
+
+    # Manual history (closed trades that aren't exposed by PMUS API)
+    history = load_manual_history()
+    hist_html = ""
+    hist_total = 0.0
+    hist_wins  = 0
+    if history:
+        for h in reversed(history):
+            pnl = float(h.get("pnl", 0))
+            hist_total += pnl
+            if h.get("result", "").upper() == "WON":
+                hist_wins += 1
+            c = "#22c55e" if pnl >= 0 else "#ef4444"
+            s = "+" if pnl >= 0 else ""
+            hist_html += (
+                f"<tr>"
+                f"<td>{h.get('date','')}</td>"
+                f"<td>{h.get('player','?')}</td>"
+                f"<td>{h.get('match','')}</td>"
+                f"<td>{h.get('cost','')}</td>"
+                f"<td style='color:{c}'>{h.get('result','')}</td>"
+                f"<td style='color:{c}'>{s}${pnl:.2f}</td>"
+                f"</tr>"
+            )
+        win_rate = (hist_wins / len(history) * 100) if history else 0
+        hist_summary = (
+            f"<div class='stats'>"
+            f"<div class='card'><div class='label'>Closed P&L</div>"
+            f"<div class='value' style='color:{\"#22c55e\" if hist_total >= 0 else \"#ef4444\"}'>"
+            f"{'+' if hist_total >= 0 else ''}${hist_total:.2f}</div></div>"
+            f"<div class='card'><div class='label'>Win Rate</div>"
+            f"<div class='value'>{hist_wins}/{len(history)} ({win_rate:.0f}%)</div></div>"
+            f"</div>"
+        )
+    else:
+        hist_summary = ""
+        hist_html = "<tr><td colspan='6' style='text-align:center;color:#64748b'>No manual history added yet</td></tr>"
 
     trades = load_trade_log()
     trades_html = ""
@@ -259,14 +307,20 @@ def render_html(state):
   {rows_html}
 </table>
 
+<h2>CLOSED TRADE HISTORY ({len(history)})</h2>
+{hist_summary}
+<table>
+  <tr><th>Date</th><th>Player</th><th>Match</th><th>Cost</th><th>Result</th><th>P&L</th></tr>
+  {hist_html}
+</table>
+
 <h2>BOT TRADE LOG ({len(trades)})</h2>
 <table>
   <tr><th>Time</th><th>Player</th><th>Bet</th><th>Price</th><th>Conviction</th><th>Edge</th></tr>
   {trades_html}
 </table>
 
-<div class="footer">refreshes every 60s · {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br>
-Note: PMUS API doesn't expose closed-trade history. Manual phone trades not shown.</div>
+<div class="footer">refreshes every 60s · {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
 </body></html>"""
 
 
