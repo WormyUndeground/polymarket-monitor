@@ -14,7 +14,7 @@ PM_SECRET  = os.environ.get("PM_SECRET", "")
 NTFY_TOPIC = "wormypolymarket"
 
 # Bankroll & Kelly Criterion sizing
-BANKROLL_USD     = float(os.environ.get("BANKROLL_USD", "60"))
+BANKROLL_USD     = float(os.environ.get("BANKROLL_USD", "50"))
 KELLY_FRACTION   = 0.25      # quarter-Kelly: safer than full Kelly, still captures most of the edge
 MIN_BET_USD      = 5.0       # floor: skip if Kelly says less than this (edge too small)
 MAX_BET_USD      = 15.0      # ceiling per single bet
