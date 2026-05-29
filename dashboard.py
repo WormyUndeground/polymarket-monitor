@@ -17,7 +17,7 @@ MOBILE_UA = "Mozilla/5.0 (iPhone)"
 _price_cache: dict = {}
 _events_cache: dict = {"data": None, "ts": 0}
 _CACHE_TTL = 60
-TRADE_LOG       = os.environ.get("TRADE_LOG", "trades.json")
+TRADE_LOG       = os.environ.get("TRADE_LOG") or ("/data/trades.json" if os.path.isdir("/data") else "trades.json")
 MANUAL_HISTORY  = os.environ.get("MANUAL_HISTORY", "manual_history.json")
 
 

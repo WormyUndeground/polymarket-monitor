@@ -48,7 +48,7 @@ KEYWORDS    = ["Roland Garros", "Roland-Garros", "French Open"]
 MOBILE_UA   = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"
 
 placed_bets: dict = {}   # market_slug -> order info
-TRADE_LOG = os.environ.get("TRADE_LOG", "trades.json")
+TRADE_LOG = os.environ.get("TRADE_LOG") or ("/data/trades.json" if os.path.isdir("/data") else "trades.json")
 
 
 def append_trade_log(entry: dict):
