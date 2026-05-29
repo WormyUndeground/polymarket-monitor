@@ -13,15 +13,29 @@ PM_KEY_ID = os.environ.get("PM_KEY_ID", "")
 PM_SECRET  = os.environ.get("PM_SECRET", "")
 NTFY_TOPIC = "wormypolymarket"
 
-# Conviction-stacking bet sizing
-BASE_BET_USD     = 5.0       # bet size for 2 traders agreeing
-PER_TRADER_BONUS = 5.0       # extra dollars per additional trader (cap below)
-MAX_BET_USD      = 15.0      # hard ceiling per single bet
-MIN_HOLDERS      = 2         # require at least N elite traders on same side
+# Bankroll & Kelly Criterion sizing
+BANKROLL_USD     = float(os.environ.get("BANKROLL_USD", "60"))
+KELLY_FRACTION   = 0.25      # quarter-Kelly: safer than full Kelly, still captures most of the edge
+MIN_BET_USD      = 5.0       # floor: skip if Kelly says less than this (edge too small)
+MAX_BET_USD      = 15.0      # ceiling per single bet
+
+# Conviction-stacking gate (must pass before sizing kicks in)
+MIN_HOLDERS      = 2         # at least N elite traders must hold same side
 MIN_TOTAL_SIZE   = 5000.0    # combined smart-money $ on player must exceed this
+
 MAX_BETS_PER_RUN = 3         # safety: never spend more than 3 * MAX_BET_USD per cycle
 MIN_PROB         = 0.20      # skip near-locks (low ROI)
 MAX_PROB         = 0.60      # skip extreme underdogs
+
+
+def kelly_bet_size(p_pro: float, market_price: float) -> float:
+    """Quarter-Kelly fraction of bankroll, given pro-implied probability and market price.
+    Returns 0 if no positive edge."""
+    if p_pro <= market_price or market_price <= 0 or market_price >= 1:
+        return 0.0
+    edge_fraction = (p_pro - market_price) / (1 - market_price)
+    raw = BANKROLL_USD * edge_fraction * KELLY_FRACTION
+    return round(raw, 2)
 
 TENNIS_TRADERS = [
     ("lovelystuff",  "0x65b54274eba5c76dee6f0fab18a590653811e82f"),
@@ -127,7 +141,7 @@ def get_smart_money_signals() -> list[dict]:
         except Exception as e:
             print(f"  [warn] fetch {name}: {e}")
 
-    # Filter by conviction thresholds
+    # Filter by conviction thresholds (sizing happens later, after PMUS price is known)
     signals = []
     for entry in raw_by_key.values():
         n = len(entry["holders"])
@@ -135,8 +149,6 @@ def get_smart_money_signals() -> list[dict]:
             continue
         if entry["total_size"] < MIN_TOTAL_SIZE:
             continue
-        # Scaled bet: $5 for 2 holders, +$5 per additional, capped
-        bet_size = min(BASE_BET_USD + PER_TRADER_BONUS * (n - MIN_HOLDERS), MAX_BET_USD)
         probs = sorted(entry["probs"])
         median_prob = probs[len(probs)//2]
         signals.append({
@@ -145,7 +157,6 @@ def get_smart_money_signals() -> list[dict]:
             "title": entry["title"],
             "holders": entry["holders"],
             "total_size": entry["total_size"],
-            "bet_size": bet_size,
         })
     return signals
 
@@ -227,9 +238,8 @@ def search_us_market(player_name: str, matches: list[dict] | None = None) -> dic
 # ── order placement ─────────────────────────────────────────────────────────
 
 def place_bet(signal: dict, matches: list[dict]) -> bool:
-    player   = signal["player"]
-    bet_size = signal.get("bet_size", BASE_BET_USD)
-    market   = search_us_market(player, matches)
+    player = signal["player"]
+    market = search_us_market(player, matches)
 
     if not market:
         print(f"  [skip] No active US market found for '{player}'")
@@ -243,9 +253,19 @@ def place_bet(signal: dict, matches: list[dict]) -> bool:
     # Bid 2 cents above market so the limit order actually crosses and fills
     market_price = market["price"]
     bid_price    = min(round(market_price + 0.02, 2), 0.95)
-    quantity     = round(bet_size / bid_price, 4)
-    profit       = round(quantity - bet_size, 2)
     price        = bid_price
+
+    # Kelly-sized bet based on edge between pro probability and PMUS market price
+    p_pro       = signal["prob"]
+    kelly_raw   = kelly_bet_size(p_pro, bid_price)
+    edge_pct    = (p_pro - bid_price) * 100
+    if kelly_raw < MIN_BET_USD:
+        print(f"  [skip] Kelly says ${kelly_raw:.2f} on {player} — edge {edge_pct:.1f}pp too small")
+        return False
+    bet_size  = min(kelly_raw, MAX_BET_USD)
+    quantity  = round(bet_size / bid_price, 4)
+    profit    = round(quantity - bet_size, 2)
+    print(f"  Edge: pro {p_pro:.0%} vs market {bid_price:.0%}  |  Kelly: ${kelly_raw:.2f}  -> bet ${bet_size:.2f}")
 
     body = {
         "marketSlug": slug,
@@ -325,7 +345,8 @@ def check():
 
     print(f"\n  {len(signals)} signal(s) passing conviction filter "
           f"(>={MIN_HOLDERS} traders, >=${MIN_TOTAL_SIZE:,.0f} combined, "
-          f"prob {MIN_PROB:.0%}-{MAX_PROB:.0%}):")
+          f"prob {MIN_PROB:.0%}-{MAX_PROB:.0%})")
+    print(f"  Bankroll: ${BANKROLL_USD}, quarter-Kelly sizing, ${MIN_BET_USD}-${MAX_BET_USD} per bet")
     placed = 0
     for s in signals:
         if placed >= MAX_BETS_PER_RUN:
@@ -334,7 +355,7 @@ def check():
         holders = ",".join(s["holders"])
         print(f"\n  Signal: {s['player']} @ {s['prob']:.0%}  |  "
               f"{len(s['holders'])} pros (${s['total_size']:,.0f}): {holders}")
-        print(f"    Match: {s['title'][:60]}  |  bet size: ${s['bet_size']:.0f}")
+        print(f"    Match: {s['title'][:60]}")
         if place_bet(s, matches):
             placed += 1
 
