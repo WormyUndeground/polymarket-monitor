@@ -290,9 +290,15 @@ class Handler(BaseHTTPRequestHandler):
         return  # quiet
 
 
+def start_server(port: int = None):
+    """Start the dashboard HTTP server. Blocks. Call in a thread to run alongside trader."""
+    p = port or PORT
+    print(f"Polymarket Dashboard serving on 0.0.0.0:{p}")
+    HTTPServer(("0.0.0.0", p), Handler).serve_forever()
+
+
 if __name__ == "__main__":
     if not PM_KEY_ID or not PM_SECRET:
         print("ERROR: Set PM_KEY_ID and PM_SECRET environment variables")
         sys.exit(1)
-    print(f"Polymarket Dashboard starting on 0.0.0.0:{PORT}")
-    HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    start_server()

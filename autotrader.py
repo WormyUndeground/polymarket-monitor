@@ -3,7 +3,7 @@ Polymarket US Auto-Trader — Roland Garros
 Reads smart-money signals from regular Polymarket, mirrors $5 bets on polymarket.us
 Requires: PM_KEY_ID and PM_SECRET environment variables
 """
-import os, base64, time, json, urllib.request, urllib.parse, sys
+import os, base64, time, json, urllib.request, urllib.parse, sys, threading
 from datetime import datetime
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -413,6 +413,14 @@ if __name__ == "__main__":
     else:
         print("All auth endpoints failed. Continuing anyway to run trade loop...")
     print()
+
+    # Spin up the dashboard HTTP server in a background thread so it shares
+    # this process's filesystem (and trades.json) with the trader loop.
+    try:
+        import dashboard
+        threading.Thread(target=dashboard.start_server, daemon=True).start()
+    except Exception as e:
+        print(f"[warn] dashboard failed to start: {e}")
 
     while True:
         try:
