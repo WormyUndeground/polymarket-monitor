@@ -152,10 +152,9 @@ def fetch_all_rg_matches() -> list[dict]:
 
 
 def find_player_in_matches(player_name: str, matches: list[dict]) -> dict | None:
-    """Look up player_name across the pre-fetched tennis match list."""
+    """Look up player_name across the pre-fetched tennis match list.
+    Requires exact full-name substring match AND PMUS price in MIN_PROB..MAX_PROB range."""
     target = player_name.lower().strip()
-    parts  = target.split()
-    last   = parts[-1] if parts else target
     for event in matches:
         for market in event.get("markets", []):
             if market.get("closed"):
@@ -163,24 +162,26 @@ def find_player_in_matches(player_name: str, matches: list[dict]) -> dict | None
             sides = market.get("marketSides", [])
             for side in sides:
                 desc = side.get("description", "").lower()
-                # Require last name AND first-name-initial match to avoid Xiyu/Xinyu Wang etc.
-                first_initial_ok = (not parts or parts[0][:1] in desc)
-                if last in desc and first_initial_ok:
-                    price = float(side.get("price", 0))
-                    if not (0.05 < price < 0.95):
-                        print(f"    [skip] Found {side['description']} but price {price:.0%} is extreme")
-                        continue
-                    intent = "ORDER_INTENT_BUY_LONG" if side["long"] else "ORDER_INTENT_BUY_SHORT"
-                    return {
-                        "slug":        market.get("slug", ""),
-                        "player":      side["description"],
-                        "price":       price,
-                        "intent":      intent,
-                        "opponent":    next(
-                            (s["description"] for s in sides if s["long"] != side["long"]), "?"
-                        ),
-                        "event_title": event.get("title", ""),
-                    }
+                # Full-name substring match (prevents Xinyu/Xiyu Wang style collisions)
+                if target not in desc:
+                    continue
+                price = float(side.get("price", 0))
+                # Bot will bid 2c above market, so check that bid would still pass range
+                bid = price + 0.02
+                if not (MIN_PROB <= bid <= MAX_PROB):
+                    print(f"    [skip] {side['description']} PMUS price {price:.0%} (bid {bid:.0%}) outside {MIN_PROB:.0%}-{MAX_PROB:.0%}")
+                    continue
+                intent = "ORDER_INTENT_BUY_LONG" if side["long"] else "ORDER_INTENT_BUY_SHORT"
+                return {
+                    "slug":        market.get("slug", ""),
+                    "player":      side["description"],
+                    "price":       price,
+                    "intent":      intent,
+                    "opponent":    next(
+                        (s["description"] for s in sides if s["long"] != side["long"]), "?"
+                    ),
+                    "event_title": event.get("title", ""),
+                }
     return None
 
 
@@ -255,10 +256,25 @@ def place_bet(signal: dict, matches: list[dict]) -> bool:
 
 # ── main loop ───────────────────────────────────────────────────────────────
 
+def load_existing_positions() -> set[str]:
+    """Read actual PMUS positions so restarts don't double-bet."""
+    status, resp = _us_get("/v1/portfolio/positions")
+    if status != 200:
+        print(f"  [warn] Could not load existing positions: {status}")
+        return set()
+    return set((resp.get("positions") or {}).keys())
+
+
 def check():
     print(f"\n{'='*60}")
     print(f"  Auto-trader check — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}")
+
+    # Reload existing positions every cycle so container restarts don't double-bet
+    existing = load_existing_positions()
+    for slug in existing:
+        placed_bets.setdefault(slug, {"loaded": True})
+    print(f"  Already holding {len(existing)} positions on PMUS")
 
     signals = get_smart_money_signals()
     if not signals:
@@ -270,9 +286,7 @@ def check():
 
     # Fetch the RG market universe once per cycle (not per signal)
     matches = fetch_all_rg_matches()
-    print(f"\n  Fetched {len(matches)} active RG matches on Polymarket US:")
-    for e in matches:
-        print(f"    - {e.get('title','?')[:70]}")
+    print(f"\n  Fetched {len(matches)} active RG matches on Polymarket US")
 
     print(f"\n  {len(signals)} signal(s) from top traders (filtered {MIN_PROB:.0%}-{MAX_PROB:.0%}):")
     placed = 0
