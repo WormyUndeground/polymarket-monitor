@@ -19,6 +19,7 @@ _events_cache: dict = {"data": None, "ts": 0}
 _CACHE_TTL = 60
 TRADE_LOG       = os.environ.get("TRADE_LOG") or ("/data/trades.json" if os.path.isdir("/data") else "trades.json")
 MANUAL_HISTORY  = os.environ.get("MANUAL_HISTORY", "manual_history.json")
+RESOLVED_LOG    = os.environ.get("RESOLVED_LOG") or (os.path.dirname(TRADE_LOG) or ".") + "/resolved_trades.json"
 
 
 def _auth_headers(method, path):
@@ -180,6 +181,23 @@ def load_manual_history():
         return []
 
 
+def load_resolved_trades():
+    """Bot bets the auto-resolution tracker has settled (same schema as manual)."""
+    if not os.path.exists(RESOLVED_LOG):
+        return []
+    try:
+        with open(RESOLVED_LOG) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def load_closed_history():
+    """Hand-entered history + auto-resolved bot bets, oldest-first by date."""
+    combined = load_manual_history() + load_resolved_trades()
+    return sorted(combined, key=lambda h: h.get("date", ""))
+
+
 def render_html(state):
     if not state:
         return "<html><body><h1>Failed to load portfolio</h1></body></html>"
@@ -205,8 +223,8 @@ def render_html(state):
             f"</tr>"
         )
 
-    # Manual history (closed trades that aren't exposed by PMUS API)
-    history = load_manual_history()
+    # Closed history: hand-entered trades + auto-resolved bot bets
+    history = load_closed_history()
     hist_html = ""
     hist_total = 0.0
     hist_wins  = 0

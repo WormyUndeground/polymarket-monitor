@@ -65,6 +65,131 @@ def append_trade_log(entry: dict):
         print(f"  [warn] trade log write failed: {e}")
 
 
+# ── resolution tracking ──────────────────────────────────────────────────────
+# When a bet's market resolves, PMUS drops it from open positions. We detect that
+# disappearance and classify WON/LOST from the last price we saw before it left
+# (tennis prices converge to ~1.0/0.0 by the time a market closes). Outputs land
+# in resolved_trades.json, which the dashboard merges into Closed Trade History.
+
+_DATA_DIR    = os.path.dirname(TRADE_LOG) or "."
+RESOLVED_LOG = os.environ.get("RESOLVED_LOG") or os.path.join(_DATA_DIR, "resolved_trades.json")
+SNAPSHOT_LOG = os.path.join(_DATA_DIR, "position_snapshots.json")
+WIN_PRICE    = 0.80   # last-seen price at/above this => treat as WON
+LOSS_PRICE   = 0.20   # last-seen price at/below this => treat as LOST
+
+
+def _load_json(path, default):
+    try:
+        if os.path.exists(path):
+            with open(path) as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"  [warn] could not read {path}: {e}")
+    return default
+
+
+def _save_json(path, data):
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"  [warn] could not write {path}: {e}")
+
+
+def _price_for(slug: str, player: str, matches: list[dict]):
+    """Current PMUS price for our side of a market, or None if not in the feed."""
+    target = (player or "").lower().strip()
+    for event in matches:
+        for market in event.get("markets", []):
+            if market.get("slug") != slug:
+                continue
+            for side in market.get("marketSides", []):
+                if target and target in side.get("description", "").lower():
+                    try:
+                        return float(side.get("price", 0))
+                    except (TypeError, ValueError):
+                        return None
+    return None
+
+
+def track_resolutions(matches: list[dict], open_slugs: set[str]):
+    """Snapshot open bot positions and record any that have just resolved."""
+    placements = _load_json(TRADE_LOG, [])
+    if not placements:
+        return
+    snapshots = _load_json(SNAPSHOT_LOG, {})
+    resolved  = _load_json(RESOLVED_LOG, [])
+    already   = {r.get("slug") for r in resolved if r.get("slug")}
+
+    # latest placement per slug (most recent bet on that market)
+    by_slug = {}
+    for t in placements:
+        if t.get("slug"):
+            by_slug[t["slug"]] = t
+
+    newly = []
+    for slug, t in by_slug.items():
+        player = t.get("player", "?")
+        cost   = float(t.get("bet_size", 0) or 0)
+        qty    = float(t.get("quantity", 0) or 0)
+        if slug in open_slugs:
+            # still held — refresh last-seen price
+            price = _price_for(slug, player, matches)
+            snap = snapshots.get(slug, {})
+            snap.update({
+                "player": player, "opponent": t.get("opponent", "?"),
+                "cost": cost, "qty": qty, "last_seen": datetime.now().isoformat(timespec="seconds"),
+            })
+            if price is not None:
+                snap["last_price"] = price
+            snapshots[slug] = snap
+            continue
+
+        # not currently held
+        if slug in already:
+            continue
+        snap = snapshots.get(slug)
+        if not snap:
+            # never observed open (likely an order that never filled) — don't invent a result
+            continue
+
+        last_price = snap.get("last_price")
+        if last_price is None:
+            result, pnl = "REVIEW", 0.0
+        elif last_price >= WIN_PRICE:
+            result, pnl = "WON", round(qty * 1.0 - cost, 2)
+        elif last_price <= LOSS_PRICE:
+            result, pnl = "LOST", round(-cost, 2)
+        else:
+            result, pnl = "REVIEW", 0.0   # vanished mid-range — flag, don't guess
+
+        entry = {
+            "date":   datetime.now().strftime("%Y-%m-%d"),
+            "player": player,
+            "match":  f"{player} vs {snap.get('opponent', t.get('opponent','?'))}",
+            "cost":   f"${cost:.2f}",
+            "result": result,
+            "pnl":    pnl,
+            "slug":   slug,
+            "settled_at": datetime.now().isoformat(timespec="seconds"),
+            "last_price": last_price,
+        }
+        resolved.append(entry)
+        newly.append(entry)
+        snapshots.pop(slug, None)
+
+    if newly:
+        _save_json(RESOLVED_LOG, resolved)
+        for e in newly:
+            print(f"  [resolved] {e['player']} -> {e['result']} ({e['pnl']:+.2f})")
+            if e["result"] != "REVIEW":
+                notify(
+                    f"Bet {e['result']}: {e['player']}",
+                    f"{e['match']} settled {e['result']} | net {e['pnl']:+.2f} (cost {e['cost']})"
+                )
+    _save_json(SNAPSHOT_LOG, snapshots)
+
+
 # ── helpers ────────────────────────────────────────────────────────────────
 
 def _fetch(url, headers=None):
@@ -362,6 +487,14 @@ def check():
         placed_bets.setdefault(slug, {"loaded": True})
     print(f"  Already holding {len(existing)} positions on PMUS")
 
+    # Fetch the RG market universe once per cycle (used for both resolution
+    # tracking and signal placement).
+    matches = fetch_all_rg_matches()
+    print(f"\n  Fetched {len(matches)} active RG matches on Polymarket US")
+
+    # Detect & record any bets that have resolved since last cycle.
+    track_resolutions(matches, existing)
+
     signals = get_smart_money_signals()
     if not signals:
         print("  No Roland Garros smart money signals right now.")
@@ -369,10 +502,6 @@ def check():
 
     # Sort by prob — value bets first (lower prob = higher payout)
     signals.sort(key=lambda s: s["prob"])
-
-    # Fetch the RG market universe once per cycle (not per signal)
-    matches = fetch_all_rg_matches()
-    print(f"\n  Fetched {len(matches)} active RG matches on Polymarket US")
 
     print(f"\n  {len(signals)} signal(s) passing conviction filter "
           f"(>={MIN_HOLDERS} traders, >=${MIN_TOTAL_SIZE:,.0f} combined, "
