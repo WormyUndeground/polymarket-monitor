@@ -4,7 +4,7 @@ Live ROI + position tracker. Reads positions + market prices from PMUS.
 Deploy as a Railway service with start command: python dashboard.py
 """
 import os, base64, time, json, urllib.request, urllib.parse, sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -347,8 +347,8 @@ class Handler(BaseHTTPRequestHandler):
 def start_server(port: int = None):
     """Start the dashboard HTTP server. Blocks. Call in a thread to run alongside trader."""
     p = port or PORT
-    print(f"Polymarket Dashboard serving on 0.0.0.0:{p}")
-    HTTPServer(("0.0.0.0", p), Handler).serve_forever()
+    print(f"Polymarket Dashboard serving on 0.0.0.0:{p}", flush=True)
+    ThreadingHTTPServer(("0.0.0.0", p), Handler).serve_forever()
 
 
 if __name__ == "__main__":

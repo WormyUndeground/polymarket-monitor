@@ -399,11 +399,20 @@ if __name__ == "__main__":
         print("Example: $env:PM_KEY_ID='your-key-id'; $env:PM_SECRET='your-secret'")
         sys.exit(1)
 
-    # Quick auth check on startup — try documented endpoint
     print("Polymarket US Auto-Trader starting...")
     print(f"Key: {PM_KEY_ID[:8]}...")
     print(f"Secret length: {len(PM_SECRET)} chars")
 
+    # Spin up the dashboard HTTP server FIRST, in a background thread, so the
+    # web port binds immediately and Railway sees a responsive app. It shares
+    # this process's filesystem (and trades.json) with the trader loop.
+    try:
+        import dashboard
+        threading.Thread(target=dashboard.start_server, daemon=True).start()
+    except Exception as e:
+        print(f"[warn] dashboard failed to start: {e}")
+
+    # Quick auth check on startup — try documented endpoint
     for path in ("/v1/portfolio/positions", "/v1/account", "/v1/account/balance", "/v1/portfolio/balance"):
         status, resp = _us_get(path)
         print(f"  GET {path} -> [{status}] {json.dumps(resp)[:200]}")
@@ -413,14 +422,6 @@ if __name__ == "__main__":
     else:
         print("All auth endpoints failed. Continuing anyway to run trade loop...")
     print()
-
-    # Spin up the dashboard HTTP server in a background thread so it shares
-    # this process's filesystem (and trades.json) with the trader loop.
-    try:
-        import dashboard
-        threading.Thread(target=dashboard.start_server, daemon=True).start()
-    except Exception as e:
-        print(f"[warn] dashboard failed to start: {e}")
 
     while True:
         try:
