@@ -232,7 +232,7 @@ def render_html(state):
         hist_summary = (
             f"<div class='stats'>"
             f"<div class='card'><div class='label'>Closed P&L</div>"
-            f"<div class='value' style='color:{\"#22c55e\" if hist_total >= 0 else \"#ef4444\"}'>"
+            f"<div class='value' style='color:{'#22c55e' if hist_total >= 0 else '#ef4444'}'>"
             f"{'+' if hist_total >= 0 else ''}${hist_total:.2f}</div></div>"
             f"<div class='card'><div class='label'>Win Rate</div>"
             f"<div class='value'>{hist_wins}/{len(history)} ({win_rate:.0f}%)</div></div>"
