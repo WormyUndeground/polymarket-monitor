@@ -400,10 +400,12 @@ def match_in_progress(event: dict) -> bool:
     return False
 
 
-def find_player_in_matches(player_name: str, matches: list[dict]) -> dict | None:
+def find_player_in_matches(player_name: str, matches: list[dict], match_title: str = "") -> dict | None:
     """Look up player_name across the pre-fetched tennis match list.
-    Requires exact full-name substring match AND PMUS price in MIN_PROB..MAX_PROB range."""
+    Requires full-name substring match, the SAME opponent as the signal's match
+    (so we don't grab the player's next-round market), AND PMUS price in range."""
     target = player_name.lower().strip()
+    title_l = match_title.lower()
     for event in matches:
         if match_in_progress(event):
             for market in event.get("markets", []):
@@ -421,6 +423,14 @@ def find_player_in_matches(player_name: str, matches: list[dict]) -> dict | None
                 # Full-name substring match (prevents Xinyu/Xiyu Wang style collisions)
                 if target not in desc:
                     continue
+                # Opponent check: the PMUS opponent must appear in the signal's match
+                # title, else this is a different round/match for the same player.
+                opp = next((s["description"] for s in sides if s["long"] != side["long"]), "")
+                if title_l:
+                    opp_tokens = [t for t in opp.lower().replace(".", "").split() if len(t) >= 4]
+                    if opp_tokens and not any(t in title_l for t in opp_tokens):
+                        print(f"    [skip] {side['description']} is vs {opp}, but signal match is '{match_title}' — wrong match")
+                        continue
                 price = float(side.get("price", 0))
                 # Bot will bid 2c above market, so check that bid would still pass range
                 bid = price + 0.02
@@ -433,19 +443,17 @@ def find_player_in_matches(player_name: str, matches: list[dict]) -> dict | None
                     "player":      side["description"],
                     "price":       price,
                     "intent":      intent,
-                    "opponent":    next(
-                        (s["description"] for s in sides if s["long"] != side["long"]), "?"
-                    ),
+                    "opponent":    opp or "?",
                     "event_title": event.get("title", ""),
                 }
     return None
 
 
-def search_us_market(player_name: str, matches: list[dict] | None = None) -> dict | None:
-    """Find an active PMUS market featuring player_name."""
+def search_us_market(player_name: str, matches: list[dict] | None = None, match_title: str = "") -> dict | None:
+    """Find an active PMUS market featuring player_name in the signal's specific match."""
     if matches is None:
         matches = fetch_all_rg_matches()
-    return find_player_in_matches(player_name, matches)
+    return find_player_in_matches(player_name, matches, match_title)
 
 
 # ── order placement ─────────────────────────────────────────────────────────
@@ -454,7 +462,7 @@ def place_bet(signal: dict, matches: list[dict], budget_left: float | None = Non
     """Place a bet for this signal. Returns the dollars actually committed
     (0.0 if nothing was placed)."""
     player = signal["player"]
-    market = search_us_market(player, matches)
+    market = search_us_market(player, matches, signal.get("title", ""))
 
     if not market:
         print(f"  [skip] No active US market found for '{player}'")
