@@ -4,7 +4,7 @@ Reads smart-money signals from regular Polymarket, mirrors $5 bets on polymarket
 Requires: PM_KEY_ID and PM_SECRET environment variables
 """
 import os, base64, time, json, urllib.request, urllib.parse, sys, threading
-from datetime import datetime
+from datetime import datetime, timezone
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -374,11 +374,34 @@ def fetch_all_rg_matches() -> list[dict]:
     return matches
 
 
+def match_in_progress(event: dict) -> bool:
+    """True if the match has already started / is being played live. We only mirror
+    pre-match bets: once a match is in-play the PMUS price reflects live state (sets won,
+    momentum) that the pros' lagging position marks don't capture, so the 'edge' is stale."""
+    if event.get("live"):
+        return True
+    start = event.get("startDate") or event.get("startTime")
+    if start:
+        try:
+            dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+            return datetime.now(timezone.utc) >= dt
+        except Exception:
+            pass
+    return False
+
+
 def find_player_in_matches(player_name: str, matches: list[dict]) -> dict | None:
     """Look up player_name across the pre-fetched tennis match list.
     Requires exact full-name substring match AND PMUS price in MIN_PROB..MAX_PROB range."""
     target = player_name.lower().strip()
     for event in matches:
+        if match_in_progress(event):
+            for market in event.get("markets", []):
+                for side in market.get("marketSides", []):
+                    if target in side.get("description", "").lower():
+                        print(f"    [skip] {side['description']} — match in progress (score {event.get('score','?')}), no in-play bets")
+                        break
+            continue
         for market in event.get("markets", []):
             if market.get("closed"):
                 continue
