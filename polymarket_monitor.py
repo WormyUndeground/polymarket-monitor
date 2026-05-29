@@ -96,7 +96,7 @@ def check():
         lines = [f"{outcome} @ {prob:.0%} | $5 wins ${win}\n{title[:60]}" for title, outcome, prob, win in new_found]
         msg = "\n\n".join(lines[:5])  # max 5 in one message
         phone_notify(f"{len(new_found)} new Roland Garros market(s)!", msg)
-        print(f"\n  {len(new_found)} new market(s) — phone notified.")
+        print(f"\n  {len(new_found)} new market(s) — notifications disabled (see autotrader).")
     else:
         print("\n  No new markets since last check.")
 
