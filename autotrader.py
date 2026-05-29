@@ -48,6 +48,21 @@ KEYWORDS    = ["Roland Garros", "Roland-Garros", "French Open"]
 MOBILE_UA   = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"
 
 placed_bets: dict = {}   # market_slug -> order info
+TRADE_LOG = os.environ.get("TRADE_LOG", "trades.json")
+
+
+def append_trade_log(entry: dict):
+    """Append a trade entry to the shared trade log file."""
+    try:
+        existing = []
+        if os.path.exists(TRADE_LOG):
+            with open(TRADE_LOG) as f:
+                existing = json.load(f)
+        existing.append(entry)
+        with open(TRADE_LOG, "w") as f:
+            json.dump(existing, f, indent=2)
+    except Exception as e:
+        print(f"  [warn] trade log write failed: {e}")
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -297,6 +312,22 @@ def place_bet(signal: dict, matches: list[dict]) -> bool:
         filled = bool(resp.get("executions"))
         status_msg = "FILLED" if filled else "RESTING on book"
         n_holders = len(signal.get("holders", []))
+        append_trade_log({
+            "ts":           datetime.now().isoformat(timespec="seconds"),
+            "player":       player,
+            "opponent":     market["opponent"],
+            "slug":         slug,
+            "bid_price":    bid_price,
+            "bet_size":     bet_size,
+            "quantity":     quantity,
+            "holders":      signal.get("holders", []),
+            "holders_count": n_holders,
+            "smart_money":  signal.get("total_size", 0),
+            "edge_pct":     edge_pct,
+            "kelly_raw":    kelly_raw,
+            "filled":       filled,
+            "order_id":     order_id,
+        })
         notify(
             f"Bet placed: {player}",
             f"${bet_size:.0f} on {player} vs {market['opponent']} @ {price:.0%}\n"

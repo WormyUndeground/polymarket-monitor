@@ -15,7 +15,9 @@ PORT      = int(os.environ.get("PORT", 8080))
 MOBILE_UA = "Mozilla/5.0 (iPhone)"
 
 _price_cache: dict = {}
+_events_cache: dict = {"data": None, "ts": 0}
 _CACHE_TTL = 60
+TRADE_LOG = os.environ.get("TRADE_LOG", "trades.json")
 
 
 def _auth_headers(method, path):
@@ -45,21 +47,42 @@ def _us_get(path):
             return e.code, {}
 
 
-def fetch_market_long_price(slug):
+def _load_events():
+    """Cache all open events from the public gateway once per cycle."""
     now = time.time()
-    cached = _price_cache.get(slug)
-    if cached and now - cached[0] < _CACHE_TTL:
-        return cached[1]
-    status, resp = _us_get(f"/v1/markets/{slug}")
-    if status != 200:
-        return None
-    m = resp.get("market", resp)
+    if _events_cache["data"] is not None and now - _events_cache["ts"] < _CACHE_TTL:
+        return _events_cache["data"]
+    by_market_slug = {}
+    try:
+        req = urllib.request.Request(
+            "https://gateway.polymarket.us/v1/events?limit=500&closed=false",
+            headers={"User-Agent": MOBILE_UA},
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read())
+        for ev in data.get("events", []):
+            for m in ev.get("markets", []):
+                by_market_slug[m.get("slug", "")] = m
+    except Exception as e:
+        print(f"  [warn] gateway events fetch failed: {e}")
+    _events_cache["data"] = by_market_slug
+    _events_cache["ts"]   = now
+    return by_market_slug
+
+
+def fetch_position_prices(slug):
+    """Return (long_price, short_price) for the given market slug, or (None,None)."""
+    markets = _load_events()
+    m = markets.get(slug)
+    if not m:
+        return None, None
+    long_p = short_p = None
     for side in m.get("marketSides", []):
         if side.get("long"):
-            price = float(side.get("price", 0))
-            _price_cache[slug] = (now, price)
-            return price
-    return None
+            long_p = float(side.get("price", 0))
+        else:
+            short_p = float(side.get("price", 0))
+    return long_p, short_p
 
 
 def classify(slug):
@@ -89,13 +112,20 @@ def get_portfolio_state():
         cost  = float(p.get("cost", {}).get("value", 0))
         realized = float(p.get("realized", {}).get("value", 0))
 
-        long_price = fetch_market_long_price(slug)
-        if long_price is None:
-            current = cost  # fallback if price lookup fails
+        long_price, short_price = fetch_position_prices(slug)
+        if long_price is None and short_price is None:
+            # Fallback: estimate from cost per share
+            avg_cost = (cost / abs(qty)) if qty else 0
+            current = qty * avg_cost
         else:
-            # netPosition is positive for the side actually held; value = qty * the side's price
-            # We need to know which side. If qty > 0 we assume same side as 'long', else short side.
-            current = qty * long_price if qty >= 0 else abs(qty) * (1 - long_price)
+            # Try to figure out which side we're on by comparing cost/qty to the two side prices
+            avg_cost = (cost / abs(qty)) if qty else 0
+            # Pick whichever side's price is closest to our avg cost (that's the side we bought)
+            candidates = []
+            if long_price  is not None: candidates.append(long_price)
+            if short_price is not None: candidates.append(short_price)
+            our_side = min(candidates, key=lambda x: abs(x - avg_cost)) if candidates else avg_cost
+            current = abs(qty) * our_side
 
         pnl = current - cost + realized
         roi = (pnl / cost * 100) if cost else 0
@@ -129,6 +159,16 @@ def get_portfolio_state():
     }
 
 
+def load_trade_log():
+    if not os.path.exists(TRADE_LOG):
+        return []
+    try:
+        with open(TRADE_LOG) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
 def render_html(state):
     if not state:
         return "<html><body><h1>Failed to load portfolio</h1></body></html>"
@@ -153,6 +193,24 @@ def render_html(state):
             f"<td style='color:{c}'>{s}{r['roi']:.1f}%</td>"
             f"</tr>"
         )
+
+    trades = load_trade_log()
+    trades_html = ""
+    if trades:
+        for t in reversed(trades[-50:]):
+            edge = t.get("edge_pct", 0)
+            trades_html += (
+                f"<tr>"
+                f"<td>{t.get('ts','')[:16]}</td>"
+                f"<td>{t.get('player','?')}</td>"
+                f"<td>${t.get('bet_size',0):.2f}</td>"
+                f"<td>{t.get('bid_price',0):.0%}</td>"
+                f"<td>{t.get('holders_count',0)} pros</td>"
+                f"<td>{edge:+.1f}pp</td>"
+                f"</tr>"
+            )
+    else:
+        trades_html = "<tr><td colspan='6' style='text-align:center;color:#64748b'>No bot trades logged yet</td></tr>"
 
     return f"""<!DOCTYPE html><html><head>
 <meta charset="utf-8">
@@ -200,7 +258,15 @@ def render_html(state):
   <tr><th>Type</th><th>Market</th><th>Qty</th><th>Cost</th><th>Now</th><th>P&L</th><th>ROI</th></tr>
   {rows_html}
 </table>
-<div class="footer">refreshes every 60s · {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
+
+<h2>BOT TRADE LOG ({len(trades)})</h2>
+<table>
+  <tr><th>Time</th><th>Player</th><th>Bet</th><th>Price</th><th>Conviction</th><th>Edge</th></tr>
+  {trades_html}
+</table>
+
+<div class="footer">refreshes every 60s · {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br>
+Note: PMUS API doesn't expose closed-trade history. Manual phone trades not shown.</div>
 </body></html>"""
 
 
