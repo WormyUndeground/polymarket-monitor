@@ -27,6 +27,12 @@ MAX_BETS_PER_RUN = 3         # safety: never spend more than 3 * MAX_BET_USD per
 MIN_PROB         = 0.20      # skip near-locks (low ROI)
 MAX_PROB         = 0.60      # skip extreme underdogs
 
+# Total-exposure cap: the most the bot is allowed to have at risk across all
+# open positions at once. Counts the cost of positions already held plus bets
+# placed this cycle, so the bot can't overcommit the bankroll. Defaults to the
+# full bankroll; override with the MAX_EXPOSURE_USD env var.
+MAX_EXPOSURE_USD = float(os.environ.get("MAX_EXPOSURE_USD", str(BANKROLL_USD)))
+
 
 def kelly_bet_size(p_pro: float, market_price: float) -> float:
     """Quarter-Kelly fraction of bankroll, given pro-implied probability and market price.
@@ -377,18 +383,20 @@ def search_us_market(player_name: str, matches: list[dict] | None = None) -> dic
 
 # ── order placement ─────────────────────────────────────────────────────────
 
-def place_bet(signal: dict, matches: list[dict]) -> bool:
+def place_bet(signal: dict, matches: list[dict], budget_left: float | None = None) -> float:
+    """Place a bet for this signal. Returns the dollars actually committed
+    (0.0 if nothing was placed)."""
     player = signal["player"]
     market = search_us_market(player, matches)
 
     if not market:
         print(f"  [skip] No active US market found for '{player}'")
-        return False
+        return 0.0
 
     slug = market["slug"]
     if slug in placed_bets:
         print(f"  [skip] Already bet on {slug}")
-        return False
+        return 0.0
 
     # Bid 2 cents above market so the limit order actually crosses and fills
     market_price = market["price"]
@@ -401,8 +409,16 @@ def place_bet(signal: dict, matches: list[dict]) -> bool:
     edge_pct    = (p_pro - bid_price) * 100
     if kelly_raw < MIN_BET_USD:
         print(f"  [skip] Kelly says ${kelly_raw:.2f} on {player} — edge {edge_pct:.1f}pp too small")
-        return False
+        return 0.0
     bet_size  = min(kelly_raw, MAX_BET_USD)
+    # Respect the remaining exposure budget: trim to fit, or skip if too little left.
+    if budget_left is not None:
+        if budget_left < MIN_BET_USD:
+            print(f"  [skip] Exposure cap: only ${budget_left:.2f} left, need >=${MIN_BET_USD}")
+            return 0.0
+        if bet_size > budget_left:
+            bet_size = round(budget_left, 2)
+            print(f"  [cap] Trimming bet to remaining exposure budget: ${bet_size:.2f}")
     quantity  = round(bet_size / bid_price, 4)
     profit    = round(quantity - bet_size, 2)
     print(f"  Edge: pro {p_pro:.0%} vs market {bid_price:.0%}  |  Kelly: ${kelly_raw:.2f}  -> bet ${bet_size:.2f}")
@@ -459,21 +475,33 @@ def place_bet(signal: dict, matches: list[dict]) -> bool:
             f"{n_holders} pros agreeing, wins ${profit:.2f} ({status_msg})\n{market['event_title']}"
         )
         print(f"  Order accepted: {order_id} | {status_msg}")
-        return True
+        return bet_size
     else:
         print(f"  [error] Order rejected: {resp}")
-        return False
+        return 0.0
 
 
 # ── main loop ───────────────────────────────────────────────────────────────
 
-def load_existing_positions() -> set[str]:
-    """Read actual PMUS positions so restarts don't double-bet."""
+def load_positions() -> dict:
+    """Read actual PMUS positions (slug -> position) so restarts don't double-bet
+    and so we can measure current exposure."""
     status, resp = _us_get("/v1/portfolio/positions")
     if status != 200:
         print(f"  [warn] Could not load existing positions: {status}")
-        return set()
-    return set((resp.get("positions") or {}).keys())
+        return {}
+    return resp.get("positions") or {}
+
+
+def total_exposure(positions: dict) -> float:
+    """Sum of cost (USD) across all currently-open positions."""
+    total = 0.0
+    for p in positions.values():
+        try:
+            total += float(p.get("cost", {}).get("value", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+    return total
 
 
 def check():
@@ -482,10 +510,13 @@ def check():
     print(f"{'='*60}")
 
     # Reload existing positions every cycle so container restarts don't double-bet
-    existing = load_existing_positions()
+    positions = load_positions()
+    existing  = set(positions.keys())
     for slug in existing:
         placed_bets.setdefault(slug, {"loaded": True})
-    print(f"  Already holding {len(existing)} positions on PMUS")
+    open_exposure = total_exposure(positions)
+    print(f"  Already holding {len(existing)} positions on PMUS "
+          f"(${open_exposure:.2f} at risk of ${MAX_EXPOSURE_USD:.2f} cap)")
 
     # Fetch the RG market universe once per cycle (used for both resolution
     # tracking and signal placement).
@@ -507,19 +538,27 @@ def check():
           f"(>={MIN_HOLDERS} traders, >=${MIN_TOTAL_SIZE:,.0f} combined, "
           f"prob {MIN_PROB:.0%}-{MAX_PROB:.0%})")
     print(f"  Bankroll: ${BANKROLL_USD}, quarter-Kelly sizing, ${MIN_BET_USD}-${MAX_BET_USD} per bet")
+    budget_left = MAX_EXPOSURE_USD - open_exposure
     placed = 0
     for s in signals:
         if placed >= MAX_BETS_PER_RUN:
             print(f"\n  [stop] Hit MAX_BETS_PER_RUN ({MAX_BETS_PER_RUN}); skipping remaining signals.")
             break
+        if budget_left < MIN_BET_USD:
+            print(f"\n  [stop] Exposure cap reached — only ${budget_left:.2f} of "
+                  f"${MAX_EXPOSURE_USD:.2f} left; skipping remaining signals.")
+            break
         holders = ",".join(s["holders"])
         print(f"\n  Signal: {s['player']} @ {s['prob']:.0%}  |  "
               f"{len(s['holders'])} pros (${s['total_size']:,.0f}): {holders}")
         print(f"    Match: {s['title'][:60]}")
-        if place_bet(s, matches):
+        spent = place_bet(s, matches, budget_left)
+        if spent > 0:
             placed += 1
+            budget_left -= spent
 
-    print(f"\n  Done: {placed} new bet(s) placed this cycle (max {MAX_BETS_PER_RUN}).")
+    print(f"\n  Done: {placed} new bet(s) placed this cycle (max {MAX_BETS_PER_RUN}). "
+          f"${budget_left:.2f} of ${MAX_EXPOSURE_USD:.2f} exposure budget left.")
 
 
 if __name__ == "__main__":
