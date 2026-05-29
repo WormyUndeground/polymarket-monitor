@@ -33,6 +33,23 @@ MAX_PROB         = 0.60      # skip extreme underdogs
 # full bankroll; override with the MAX_EXPOSURE_USD env var.
 MAX_EXPOSURE_USD = float(os.environ.get("MAX_EXPOSURE_USD", str(BANKROLL_USD)))
 
+# Conviction-tiered bet ceiling: with 20 traders followed, more of them backing
+# the same side = stronger signal = larger allowed bet. The tier sets the *cap*;
+# Kelly still sizes within it based on the price edge (so a thin edge stays small
+# even at high conviction). Checked highest-threshold first.
+CONVICTION_TIERS = [
+    (7, 15.0),   # 7+ pros (~35% consensus) -> up to $15
+    (4, 10.0),   # 4-6 pros               -> up to $10
+    (2,  5.0),   # 2-3 pros (gate floor)  -> up to $5
+]
+
+
+def conviction_cap(n_holders: int) -> float:
+    for threshold, cap in CONVICTION_TIERS:
+        if n_holders >= threshold:
+            return cap
+    return MIN_BET_USD
+
 
 def kelly_bet_size(p_pro: float, market_price: float) -> float:
     """Quarter-Kelly fraction of bankroll, given pro-implied probability and market price.
@@ -427,7 +444,11 @@ def place_bet(signal: dict, matches: list[dict], budget_left: float | None = Non
     if kelly_raw < MIN_BET_USD:
         print(f"  [skip] Kelly says ${kelly_raw:.2f} on {player} — edge {edge_pct:.1f}pp too small")
         return 0.0
-    bet_size  = min(kelly_raw, MAX_BET_USD)
+    # Conviction tier sets the ceiling; Kelly sizes within it.
+    n_holders = len(signal.get("holders", []))
+    cap       = min(conviction_cap(n_holders), MAX_BET_USD)
+    bet_size  = min(kelly_raw, cap)
+    print(f"  Conviction: {n_holders} pros -> cap ${cap:.0f}")
     # Respect the remaining exposure budget: trim to fit, or skip if too little left.
     if budget_left is not None:
         if budget_left < MIN_BET_USD:

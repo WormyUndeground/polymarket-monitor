@@ -183,12 +183,14 @@ def _live_params():
             "MAX_PROB":       a.MAX_PROB,
             "MIN_BET_USD":    a.MIN_BET_USD,
             "MAX_BET_USD":    a.MAX_BET_USD,
+            "conviction_cap": a.conviction_cap,
         }
     except Exception:
         return {
             "MIN_HOLDERS": 2, "MIN_TOTAL_SIZE": 5000.0,
             "MIN_PROB": 0.20, "MAX_PROB": 0.60,
             "MIN_BET_USD": 5.0, "MAX_BET_USD": 15.0,
+            "conviction_cap": None,
         }
 
 
@@ -212,6 +214,10 @@ def eval_compliance(trades):
             reasons.append(f"price {price:.0%} outside {p['MIN_PROB']:.0%}–{p['MAX_PROB']:.0%}")
         if not (p["MIN_BET_USD"] <= size <= p["MAX_BET_USD"]):
             reasons.append(f"bet ${size:.2f} outside ${p['MIN_BET_USD']:.0f}–${p['MAX_BET_USD']:.0f}")
+        if p.get("conviction_cap"):
+            cap = min(p["conviction_cap"](holders), p["MAX_BET_USD"])
+            if size > cap + 0.01:
+                reasons.append(f"bet ${size:.2f} exceeds ${cap:.0f} cap for {holders} pros")
         if edge <= 0:
             reasons.append(f"edge {edge:+.1f}pp not positive")
         if reasons:
