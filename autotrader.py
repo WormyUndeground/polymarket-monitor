@@ -38,11 +38,11 @@ def kelly_bet_size(p_pro: float, market_price: float) -> float:
     return round(raw, 2)
 
 TENNIS_TRADERS = [
-    ("lovelystuff",  "0x65b54274eba5c76dee6f0fab18a590653811e82f"),
-    ("swisstony",    "0x204f72f35326db932158cba6adff0b9a1da95e14"),
-    ("ChloeT1",      "0x9ac2536ed93f8fe8ce91d9662b03bcbb19ccbe3d"),
-    ("shakendbake",  "0x5e4dbe95f805e27959532f4845e2e4180017b874"),
-    ("anon18",       "0x5966db1fe50763c9e3c014d756369bad07e1f804"),
+    ("swisstony",       "0x204f72f35326db932158cba6adff0b9a1da95e14"),
+    ("anon18",          "0x5966db1fe50763c9e3c014d756369bad07e1f804"),
+    ("HomeRunHazard",   "0x5268527977f700f9bf9b6d5cd843859e4e70135d"),
+    ("ferrariChampions","0xfe787d2da716d60e8acff57fb87eb13cd4d10319"),
+    ("strike123",       "0xf284ad6d607f777f34bc643cea587c33a886b9f9"),
 ]
 KEYWORDS    = ["Roland Garros", "Roland-Garros", "French Open"]
 MOBILE_UA   = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"
