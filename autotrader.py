@@ -60,6 +60,12 @@ FRESH_BUY_HOURS = float(os.environ.get("FRESH_BUY_HOURS", "24"))
 # Flip on with DRY_RUN=1 to test a live cycle without risking money.
 DRY_RUN = os.environ.get("DRY_RUN", "").strip() in ("1", "true", "True", "yes")
 
+# How often to run a full cycle. Tightened from 60 -> 15 min: global Polymarket
+# lists next-round markets ahead of PMUS, so the bettable window (PMUS has the
+# market AND the match hasn't started) is narrow. Checking 4x as often means the
+# bot grabs a market the moment PMUS posts it, before tip-off. Tune via env var.
+CHECK_INTERVAL_MIN = float(os.environ.get("CHECK_INTERVAL_MIN", "15"))
+
 
 def kelly_bet_size(p_pro: float, market_price: float) -> float:
     """Quarter-Kelly fraction of bankroll, given pro-implied probability and market price.
@@ -692,5 +698,5 @@ if __name__ == "__main__":
             break
         except Exception as e:
             print(f"\n[error] {e}")
-        print(f"\n  Next check in 60 minutes.\n")
-        time.sleep(60 * 60)
+        print(f"\n  Next check in {CHECK_INTERVAL_MIN:.0f} minutes.\n")
+        time.sleep(CHECK_INTERVAL_MIN * 60)
