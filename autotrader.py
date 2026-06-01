@@ -588,10 +588,23 @@ def load_positions() -> dict:
     return resp.get("positions") or {}
 
 
+def is_rg_slug(slug: str) -> bool:
+    """True if a position slug belongs to a tennis (RG) market — the bot's own
+    domain. PMUS tennis slugs look like 'aec-atp-...' / 'aec-wta-...'; other
+    holdings (e.g. 'tec-fifa-wc-...') are the user's manual bets and must NOT
+    count against the bot's exposure budget."""
+    s = (slug or "").lower()
+    return "atp" in s or "wta" in s
+
+
 def total_exposure(positions: dict) -> float:
-    """Sum of cost (USD) across all currently-open positions."""
+    """Sum of cost (USD) across the bot's own open RG positions only. Non-tennis
+    holdings the user placed manually are excluded so they don't eat the bot's
+    betting budget."""
     total = 0.0
-    for p in positions.values():
+    for slug, p in positions.items():
+        if not is_rg_slug(slug):
+            continue
         try:
             total += float(p.get("cost", {}).get("value", 0) or 0)
         except (TypeError, ValueError):
@@ -609,9 +622,10 @@ def check():
     existing  = set(positions.keys())
     for slug in existing:
         placed_bets.setdefault(slug, {"loaded": True})
+    rg_positions  = [s for s in existing if is_rg_slug(s)]
     open_exposure = total_exposure(positions)
-    print(f"  Already holding {len(existing)} positions on PMUS "
-          f"(${open_exposure:.2f} at risk of ${MAX_EXPOSURE_USD:.2f} cap)")
+    print(f"  Holding {len(existing)} PMUS positions total; {len(rg_positions)} are tennis "
+          f"(${open_exposure:.2f} RG exposure of ${MAX_EXPOSURE_USD:.2f} cap)")
 
     # Fetch the RG market universe once per cycle (used for both resolution
     # tracking and signal placement).
