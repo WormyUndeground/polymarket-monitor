@@ -673,6 +673,23 @@ def load_positions_global() -> dict:
     return out
 
 
+def global_balance() -> float | None:
+    """Free USDC (collateral) in the global proxy wallet, or None if it can't be read.
+    Used to cap the bot's spend to what's actually available, so it never fires orders
+    it can't afford."""
+    try:
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        client = get_clob()
+        resp = client.get_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=CLOB_SIG_TYPE)
+        )
+        raw = resp.get("balance") if isinstance(resp, dict) else resp
+        return float(raw) / 1_000_000  # USDC has 6 decimals
+    except Exception as e:
+        print(f"  [warn] could not read global balance: {e}")
+        return None
+
+
 def exposure_global(positions: dict) -> float:
     """Sum cost (USD) of RG positions in the global wallet."""
     total = 0.0
@@ -835,14 +852,17 @@ def check():
 
     # Reload existing positions every cycle so container restarts don't double-bet
     matches = None
+    wallet_cap = None
     if EXEC_VENUE == "global":
         positions = load_positions_global()        # keyed by token id
         existing  = set(positions.keys())
         for tok in existing:
             placed_bets.setdefault(tok, {"loaded": True})
         open_exposure = exposure_global(positions)
+        wallet_cap = global_balance()              # real USDC available to spend
+        bal_str = f"${wallet_cap:.2f} free" if wallet_cap is not None else "balance unknown"
         print(f"  [GLOBAL] Holding {len(existing)} positions on polymarket.com "
-              f"(${open_exposure:.2f} RG exposure of ${MAX_EXPOSURE_USD:.2f} cap)")
+              f"(${open_exposure:.2f} RG exposure of ${MAX_EXPOSURE_USD:.2f} cap, {bal_str})")
     else:
         positions = load_positions()
         existing  = set(positions.keys())
@@ -876,6 +896,10 @@ def check():
     print(f"  Bankroll: ${BANKROLL_USD}, conviction-tier sizing ${MIN_BET_USD}-${MAX_BET_USD}/bet, "
           f"max chase {MAX_CHASE_PP:.0f}pp")
     budget_left = MAX_EXPOSURE_USD - open_exposure
+    # On global, never try to spend more USDC than the wallet actually holds.
+    if wallet_cap is not None and wallet_cap < budget_left:
+        print(f"  [budget] Wallet has ${wallet_cap:.2f} free — capping spend to that (below ${budget_left:.2f} exposure room)")
+        budget_left = wallet_cap
     placed = 0
     for s in signals:
         if placed >= MAX_BETS_PER_RUN:
