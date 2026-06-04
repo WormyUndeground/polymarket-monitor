@@ -388,18 +388,23 @@ def get_smart_money_signals() -> list[dict]:
 def one_signal_per_match(signals: list[dict]) -> list[dict]:
     """Never bet both sides of the same match. When the pros are split across a
     match's two outcomes, keep only the higher-conviction side (most holders, then
-    most smart money). Betting both guarantees a loss (you'd pay >100% for a 100%
-    payout)."""
-    best: dict = {}
+    most smart money) — betting both guarantees a loss (you'd pay >100% for a 100%
+    payout). Records the opposing side's holder count on the kept signal so sizing
+    can scale by the *margin* of consensus, not the raw winning count."""
+    groups: dict = {}
     for s in signals:
         key = s.get("conditionId") or s.get("title")
-        cur = best.get(key)
-        rank = (len(s["holders"]), s["total_size"])
-        if cur is None or rank > (len(cur["holders"]), cur["total_size"]):
-            best[key] = s
-    kept = list(best.values())
-    if len(kept) < len(signals):
-        dropped = len(signals) - len(kept)
+        groups.setdefault(key, []).append(s)
+    kept, dropped = [], 0
+    for group in groups.values():
+        group.sort(key=lambda s: (len(s["holders"]), s["total_size"]), reverse=True)
+        winner = group[0]
+        opp    = group[1] if len(group) > 1 else None
+        winner["opp_holders"] = len(opp["holders"]) if opp else 0
+        winner["opp_size"]    = opp["total_size"] if opp else 0.0
+        dropped += len(group) - 1
+        kept.append(winner)
+    if dropped:
         print(f"  [dedupe] Dropped {dropped} opposite-side signal(s) — one bet per match")
     return kept
 
@@ -544,10 +549,14 @@ def place_bet(signal: dict, matches: list[dict], budget_left: float | None = Non
         print(f"  [skip] {player}: PMUS bid {bid_price:.0%} is {chase_pp:.0f}pp above pros' "
               f"entry {p_pro:.0%} (max chase {MAX_CHASE_PP:.0f}pp) — not chasing")
         return 0.0
-    # Flat conviction-tier sizing: more pros agreeing = bigger bet.
+    # Proportional conviction sizing: scale by the *margin* of agreement
+    # (our pros minus opposing pros), so contested matches bet smaller.
     n_holders = len(signal.get("holders", []))
-    bet_size  = min(conviction_cap(n_holders), MAX_BET_USD)
-    print(f"  Conviction: {n_holders} pros -> bet ${bet_size:.0f}  "
+    opp       = signal.get("opp_holders", 0)
+    net       = n_holders - opp
+    bet_size  = min(conviction_cap(net), MAX_BET_USD)
+    split     = f"{n_holders} vs {opp} -> net {net}" if opp else f"{n_holders} pros"
+    print(f"  Conviction: {split} -> bet ${bet_size:.0f}  "
           f"(pros paid {p_pro:.0%}, bid {bid_price:.0%}, chase {chase_pp:+.0f}pp)")
     # Respect the remaining exposure budget: trim to fit, or skip if too little left.
     if budget_left is not None:
@@ -748,7 +757,9 @@ def place_bet_global(signal: dict, budget_left: float | None = None) -> float:
         return 0.0
 
     n_holders = len(signal.get("holders", []))
-    bet_size  = min(conviction_cap(n_holders), MAX_BET_USD)
+    opp       = signal.get("opp_holders", 0)
+    net       = n_holders - opp
+    bet_size  = min(conviction_cap(net), MAX_BET_USD)
     if budget_left is not None:
         if budget_left < MIN_BET_USD:
             print(f"  [skip] Exposure cap: only ${budget_left:.2f} left, need >=${MIN_BET_USD}")
@@ -760,7 +771,8 @@ def place_bet_global(signal: dict, budget_left: float | None = None) -> float:
     size_shares = round(bet_size / bid_price, 2)
     profit      = round(size_shares - bet_size, 2)
     opponent    = opponent_from_title(signal.get("title", ""), player)
-    print(f"  [GLOBAL] {n_holders} pros -> ${bet_size:.2f} on {player} vs {opponent} "
+    split       = f"{n_holders} vs {opp} (net {net})" if opp else f"{n_holders} pros"
+    print(f"  [GLOBAL] {split} -> ${bet_size:.2f} on {player} vs {opponent} "
           f"@ {bid_price:.0%} ({size_shares} shares, pros paid {p_pro:.0%})")
 
     if DRY_RUN:
