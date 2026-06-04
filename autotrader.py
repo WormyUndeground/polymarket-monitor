@@ -60,6 +60,20 @@ def conviction_cap(n_holders: int) -> float:
             return cap
     return MIN_BET_USD
 
+
+# Net margin at which the bet hits the MAX_BET ceiling. Lower = ramps to max
+# faster; higher = more conservative. Tune via env var.
+NET_FULL_CONVICTION = float(os.environ.get("NET_FULL_CONVICTION", "7"))
+
+
+def conviction_bet(n_holders: int, opp_holders: int = 0) -> float:
+    """Continuous bet size from the *consensus margin*. With X pros on our side and
+    Y on the opposing side, net = X - Y scales the bet linearly from MIN_BET (net<=0)
+    up to MAX_BET (net >= NET_FULL_CONVICTION). Uses both sides of the match."""
+    net = n_holders - opp_holders
+    f   = max(0.0, min(net / NET_FULL_CONVICTION, 1.0))
+    return round(MIN_BET_USD + (MAX_BET_USD - MIN_BET_USD) * f, 2)
+
 # Anti-chase guard (percentage points). We copy the pros even when PMUS has drifted
 # UP from their entry price, but refuse to chase a market that has already run more
 # than this far past what they paid. 15pp = "medium": fires on most real signals,
@@ -549,14 +563,14 @@ def place_bet(signal: dict, matches: list[dict], budget_left: float | None = Non
         print(f"  [skip] {player}: PMUS bid {bid_price:.0%} is {chase_pp:.0f}pp above pros' "
               f"entry {p_pro:.0%} (max chase {MAX_CHASE_PP:.0f}pp) — not chasing")
         return 0.0
-    # Proportional conviction sizing: scale by the *margin* of agreement
-    # (our pros minus opposing pros), so contested matches bet smaller.
+    # Proportional conviction sizing: bet scales with the consensus margin
+    # (our pros minus opposing pros) via the conviction_bet formula.
     n_holders = len(signal.get("holders", []))
     opp       = signal.get("opp_holders", 0)
     net       = n_holders - opp
-    bet_size  = min(conviction_cap(net), MAX_BET_USD)
+    bet_size  = conviction_bet(n_holders, opp)
     split     = f"{n_holders} vs {opp} -> net {net}" if opp else f"{n_holders} pros"
-    print(f"  Conviction: {split} -> bet ${bet_size:.0f}  "
+    print(f"  Conviction: {split} -> bet ${bet_size:.2f}  "
           f"(pros paid {p_pro:.0%}, bid {bid_price:.0%}, chase {chase_pp:+.0f}pp)")
     # Respect the remaining exposure budget: trim to fit, or skip if too little left.
     if budget_left is not None:
@@ -615,6 +629,7 @@ def place_bet(signal: dict, matches: list[dict], budget_left: float | None = Non
             "quantity":     quantity,
             "holders":      signal.get("holders", []),
             "holders_count": n_holders,
+            "opp_holders":  signal.get("opp_holders", 0),
             "smart_money":  signal.get("total_size", 0),
             "edge_pct":     edge_pct,
             "kelly_raw":    kelly_raw,
@@ -759,7 +774,7 @@ def place_bet_global(signal: dict, budget_left: float | None = None) -> float:
     n_holders = len(signal.get("holders", []))
     opp       = signal.get("opp_holders", 0)
     net       = n_holders - opp
-    bet_size  = min(conviction_cap(net), MAX_BET_USD)
+    bet_size  = conviction_bet(n_holders, opp)
     if budget_left is not None:
         if budget_left < MIN_BET_USD:
             print(f"  [skip] Exposure cap: only ${budget_left:.2f} left, need >=${MIN_BET_USD}")
@@ -805,6 +820,7 @@ def place_bet_global(signal: dict, budget_left: float | None = None) -> float:
         "quantity":      size_shares,
         "holders":       signal.get("holders", []),
         "holders_count": n_holders,
+        "opp_holders":   signal.get("opp_holders", 0),
         "smart_money":   signal.get("total_size", 0),
         "edge_pct":      edge_pct,
         "kelly_raw":     kelly_bet_size(p_pro, bid_price),
