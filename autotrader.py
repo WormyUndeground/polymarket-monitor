@@ -658,7 +658,8 @@ def check():
     print(f"\n  {len(signals)} signal(s) passing conviction filter "
           f"(>={MIN_HOLDERS} traders, >=${MIN_TOTAL_SIZE:,.0f} combined, "
           f"prob {MIN_PROB:.0%}-{MAX_PROB:.0%})")
-    print(f"  Bankroll: ${BANKROLL_USD}, quarter-Kelly sizing, ${MIN_BET_USD}-${MAX_BET_USD} per bet")
+    print(f"  Bankroll: ${BANKROLL_USD}, conviction-tier sizing ${MIN_BET_USD}-${MAX_BET_USD}/bet, "
+          f"max chase {MAX_CHASE_PP:.0f}pp")
     budget_left = MAX_EXPOSURE_USD - open_exposure
     placed = 0
     for s in signals:
