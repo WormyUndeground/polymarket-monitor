@@ -50,6 +50,12 @@ def conviction_cap(n_holders: int) -> float:
             return cap
     return MIN_BET_USD
 
+# Anti-chase guard (percentage points). We copy the pros even when PMUS has drifted
+# UP from their entry price, but refuse to chase a market that has already run more
+# than this far past what they paid. 15pp = "medium": fires on most real signals,
+# skips runaway moves. Tune via env var.
+MAX_CHASE_PP = float(os.environ.get("MAX_CHASE_PP", "15"))
+
 # Fresh-buy window: only count traders who *bought* a side within this many hours,
 # not anyone still holding a stale/underwater position. 79% of the pool's RG buys
 # land within 24h, so this captures pre-match conviction while dropping old bags.
@@ -489,18 +495,24 @@ def place_bet(signal: dict, matches: list[dict], budget_left: float | None = Non
     bid_price    = min(round(market_price + 0.02, 2), 0.95)
     price        = bid_price
 
-    # Kelly-sized bet based on edge between pro probability and PMUS market price
-    p_pro       = signal["prob"]
-    kelly_raw   = kelly_bet_size(p_pro, bid_price)
-    edge_pct    = (p_pro - bid_price) * 100
-    if kelly_raw < MIN_BET_USD:
-        print(f"  [skip] Kelly says ${kelly_raw:.2f} on {player} — edge {edge_pct:.1f}pp too small")
+    # Copy-trading model: the edge is that elite traders are backing this player,
+    # not a price discount. We do NOT require PMUS to be cheaper than their entry
+    # (it rarely is — the price usually rises after the smart money buys, and PMUS
+    # lists late). Instead we size by conviction and only refuse to *chase* a price
+    # that has run too far past where the pros got in.
+    p_pro       = signal["prob"]                 # median price the pros actually paid
+    edge_pct    = (p_pro - bid_price) * 100       # >0 means PMUS still cheaper than their entry
+    chase_pp    = (bid_price - p_pro) * 100       # how far above their entry we'd be paying
+    kelly_raw   = kelly_bet_size(p_pro, bid_price)  # kept for the trade-log record only
+    if chase_pp > MAX_CHASE_PP:
+        print(f"  [skip] {player}: PMUS bid {bid_price:.0%} is {chase_pp:.0f}pp above pros' "
+              f"entry {p_pro:.0%} (max chase {MAX_CHASE_PP:.0f}pp) — not chasing")
         return 0.0
-    # Conviction tier sets the ceiling; Kelly sizes within it.
+    # Flat conviction-tier sizing: more pros agreeing = bigger bet.
     n_holders = len(signal.get("holders", []))
-    cap       = min(conviction_cap(n_holders), MAX_BET_USD)
-    bet_size  = min(kelly_raw, cap)
-    print(f"  Conviction: {n_holders} pros -> cap ${cap:.0f}")
+    bet_size  = min(conviction_cap(n_holders), MAX_BET_USD)
+    print(f"  Conviction: {n_holders} pros -> bet ${bet_size:.0f}  "
+          f"(pros paid {p_pro:.0%}, bid {bid_price:.0%}, chase {chase_pp:+.0f}pp)")
     # Respect the remaining exposure budget: trim to fit, or skip if too little left.
     if budget_left is not None:
         if budget_left < MIN_BET_USD:
@@ -511,7 +523,7 @@ def place_bet(signal: dict, matches: list[dict], budget_left: float | None = Non
             print(f"  [cap] Trimming bet to remaining exposure budget: ${bet_size:.2f}")
     quantity  = round(bet_size / bid_price, 4)
     profit    = round(quantity - bet_size, 2)
-    print(f"  Edge: pro {p_pro:.0%} vs market {bid_price:.0%}  |  Kelly: ${kelly_raw:.2f}  -> bet ${bet_size:.2f}")
+    print(f"  Sizing: {n_holders} pros -> ${bet_size:.2f}  (pros paid {p_pro:.0%}, bidding {bid_price:.0%})")
 
     body = {
         "marketSlug": slug,

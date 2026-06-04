@@ -183,6 +183,7 @@ def _live_params():
             "MAX_PROB":       a.MAX_PROB,
             "MIN_BET_USD":    a.MIN_BET_USD,
             "MAX_BET_USD":    a.MAX_BET_USD,
+            "MAX_CHASE_PP":   a.MAX_CHASE_PP,
             "conviction_cap": a.conviction_cap,
         }
     except Exception:
@@ -190,6 +191,7 @@ def _live_params():
             "MIN_HOLDERS": 2, "MIN_TOTAL_SIZE": 5000.0,
             "MIN_PROB": 0.20, "MAX_PROB": 0.60,
             "MIN_BET_USD": 5.0, "MAX_BET_USD": 15.0,
+            "MAX_CHASE_PP": 15.0,
             "conviction_cap": None,
         }
 
@@ -218,8 +220,11 @@ def eval_compliance(trades):
             cap = min(p["conviction_cap"](holders), p["MAX_BET_USD"])
             if size > cap + 0.01:
                 reasons.append(f"bet ${size:.2f} exceeds ${cap:.0f} cap for {holders} pros")
-        if edge <= 0:
-            reasons.append(f"edge {edge:+.1f}pp not positive")
+        # Copy-trading model: negative edge is fine (PMUS usually drifts up after the
+        # pros buy). We only flag *chasing* — paying more than MAX_CHASE_PP above their
+        # entry. edge = (pros_paid - bid)*100, so chase = -edge.
+        if -edge > p["MAX_CHASE_PP"]:
+            reasons.append(f"chased {-edge:.0f}pp above pros' entry (max {p['MAX_CHASE_PP']:.0f}pp)")
         if reasons:
             violations.append((t, reasons))
     return len(trades) - len(violations), len(trades), violations
