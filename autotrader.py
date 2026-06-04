@@ -3,7 +3,7 @@ Polymarket US Auto-Trader — Roland Garros
 Reads smart-money signals from regular Polymarket, mirrors $5 bets on polymarket.us
 Requires: PM_KEY_ID and PM_SECRET environment variables
 """
-import os, base64, time, json, urllib.request, urllib.parse, sys, threading
+import os, re, base64, time, json, urllib.request, urllib.parse, sys, threading
 from datetime import datetime, timezone
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -12,6 +12,16 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 PM_KEY_ID = os.environ.get("PM_KEY_ID", "")
 PM_SECRET  = os.environ.get("PM_SECRET", "")
 NTFY_TOPIC = "wormypolymarket"
+
+# Execution venue: "pmus" (default, Polymarket US) or "global" (polymarket.com via CLOB).
+# Global trades the SAME market the smart-money signal came from (no PMUS bridge,
+# no listing lag, no opponent matching) — it bets directly on the signal's token.
+EXEC_VENUE       = os.environ.get("EXEC_VENUE", "pmus").strip().lower()
+PM_GLOBAL_KEY    = os.environ.get("PM_GLOBAL_KEY", "")     # Polygon wallet private key (signs orders)
+PM_GLOBAL_FUNDER = os.environ.get("PM_GLOBAL_FUNDER", "")  # email/magic proxy wallet (holds USDC)
+CLOB_HOST        = "https://clob.polymarket.com"
+CLOB_CHAIN_ID    = 137                                     # Polygon mainnet
+CLOB_SIG_TYPE    = 1                                       # 1 = email/magic proxy wallet
 
 # Bankroll & Kelly Criterion sizing
 BANKROLL_USD     = float(os.environ.get("BANKROLL_USD", "50"))
@@ -340,6 +350,10 @@ def get_smart_money_signals() -> list[dict]:
                 entry = raw_by_key.setdefault(key, {
                     "player": outcome, "title": title,
                     "holders": [], "prices": [], "total_size": 0.0,
+                    # market identity carried straight from the buy record, so global
+                    # execution can bet on the exact same token with no PMUS lookup.
+                    "asset": r.get("asset"), "conditionId": r.get("conditionId"),
+                    "slug": r.get("slug"),
                 })
                 entry["total_size"] += usd        # all fresh $ deployed (incl. scale-ins)
                 entry["prices"].append(price)
@@ -364,6 +378,9 @@ def get_smart_money_signals() -> list[dict]:
             "title": entry["title"],
             "holders": entry["holders"],
             "total_size": entry["total_size"],
+            "asset": entry.get("asset"),
+            "conditionId": entry.get("conditionId"),
+            "slug": entry.get("slug"),
         })
     return signals
 
@@ -588,6 +605,174 @@ def place_bet(signal: dict, matches: list[dict], budget_left: float | None = Non
         return 0.0
 
 
+# ── global (polymarket.com / CLOB) execution ────────────────────────────────
+# Bets directly on the token the smart-money signal came from. No PMUS lookup,
+# no opponent matching, no listing lag — the signal *is* the market.
+
+_clob = None
+
+
+def get_clob():
+    """Lazily build + authenticate the CLOB client (email/magic proxy wallet)."""
+    global _clob
+    if _clob is None:
+        from py_clob_client.client import ClobClient
+        c = ClobClient(
+            host=CLOB_HOST, chain_id=CLOB_CHAIN_ID, key=PM_GLOBAL_KEY,
+            signature_type=CLOB_SIG_TYPE, funder=PM_GLOBAL_FUNDER,
+        )
+        c.set_api_creds(c.create_or_derive_api_creds())
+        _clob = c
+    return _clob
+
+
+def opponent_from_title(title: str, player: str) -> str:
+    """Pull the opponent out of a 'Roland Garros XXX: A vs B' title."""
+    core = title.split(":", 1)[-1]
+    parts = [p.strip() for p in re.split(r"\bvs\.?\b", core, flags=re.I) if p.strip()]
+    pl = (player or "").lower()
+    for p in parts:
+        if p.lower() not in pl and pl not in p.lower():
+            return p
+    return parts[-1] if parts else "?"
+
+
+def load_positions_global() -> dict:
+    """Current holdings in the global proxy wallet, keyed by token id (asset)."""
+    if not PM_GLOBAL_FUNDER:
+        return {}
+    try:
+        recs = _fetch(f"https://data-api.polymarket.com/positions?user={PM_GLOBAL_FUNDER}&limit=200")
+    except Exception as e:
+        print(f"  [warn] Could not load global positions: {e}")
+        return {}
+    out = {}
+    for p in recs or []:
+        tok = p.get("asset")
+        if tok:
+            out[tok] = p
+    return out
+
+
+def exposure_global(positions: dict) -> float:
+    """Sum cost (USD) of RG positions in the global wallet."""
+    total = 0.0
+    for p in positions.values():
+        if not any(k.lower() in (p.get("title", "") or "").lower() for k in KEYWORDS):
+            continue
+        try:
+            total += float(p.get("initialValue") or p.get("currentValue") or 0)
+        except (TypeError, ValueError):
+            pass
+    return total
+
+
+def place_bet_global(signal: dict, budget_left: float | None = None) -> float:
+    """Place a copy-trade order on polymarket.com via the CLOB. Returns $ committed."""
+    from py_clob_client.clob_types import OrderArgs, OrderType
+    from py_clob_client.order_builder.constants import BUY
+
+    player = signal["player"]
+    token  = signal.get("asset")
+    if not token:
+        print(f"  [skip] {player}: signal has no token id (asset) — can't place global order")
+        return 0.0
+    if token in placed_bets:
+        print(f"  [skip] Already bet on {player} ({signal.get('slug','?')})")
+        return 0.0
+
+    try:
+        client = get_clob()
+        pr = client.get_price(token_id=token, side=BUY)   # best ask to buy this outcome
+        market_price = float(pr.get("price") if isinstance(pr, dict) else pr)
+    except Exception as e:
+        print(f"  [skip] {player}: could not price token on global: {e}")
+        return 0.0
+    if market_price <= 0 or market_price >= 1:
+        print(f"  [skip] {player}: bad global price {market_price}")
+        return 0.0
+
+    # Bid a touch above the ask so the limit order crosses and fills, snapped to tick.
+    try:
+        tick = float(client.get_tick_size(token))
+    except Exception:
+        tick = 0.01
+    bid_price = min(round((market_price + tick) / tick) * tick, 0.95)
+    bid_price = round(bid_price, 4)
+
+    if not (MIN_PROB <= bid_price <= MAX_PROB):
+        print(f"  [skip] {player}: global price {market_price:.0%} (bid {bid_price:.0%}) outside {MIN_PROB:.0%}-{MAX_PROB:.0%}")
+        return 0.0
+
+    p_pro    = signal["prob"]
+    edge_pct = (p_pro - bid_price) * 100
+    chase_pp = (bid_price - p_pro) * 100
+    if chase_pp > MAX_CHASE_PP:
+        print(f"  [skip] {player}: bid {bid_price:.0%} is {chase_pp:.0f}pp above pros' entry {p_pro:.0%} (max {MAX_CHASE_PP:.0f}pp) — not chasing")
+        return 0.0
+
+    n_holders = len(signal.get("holders", []))
+    bet_size  = min(conviction_cap(n_holders), MAX_BET_USD)
+    if budget_left is not None:
+        if budget_left < MIN_BET_USD:
+            print(f"  [skip] Exposure cap: only ${budget_left:.2f} left, need >=${MIN_BET_USD}")
+            return 0.0
+        if bet_size > budget_left:
+            bet_size = round(budget_left, 2)
+            print(f"  [cap] Trimming bet to remaining exposure budget: ${bet_size:.2f}")
+
+    size_shares = round(bet_size / bid_price, 2)
+    profit      = round(size_shares - bet_size, 2)
+    opponent    = opponent_from_title(signal.get("title", ""), player)
+    print(f"  [GLOBAL] {n_holders} pros -> ${bet_size:.2f} on {player} vs {opponent} "
+          f"@ {bid_price:.0%} ({size_shares} shares, pros paid {p_pro:.0%})")
+
+    if DRY_RUN:
+        print(f"  [DRY RUN] WOULD place ${bet_size:.2f} on {player} ({size_shares} shares @ {bid_price}) — no order submitted")
+        return bet_size
+
+    try:
+        order = client.create_order(OrderArgs(token_id=token, price=bid_price, size=size_shares, side=BUY))
+        resp  = client.post_order(order, OrderType.GTC)
+    except Exception as e:
+        print(f"  [error] Global order failed: {e}")
+        return 0.0
+    print(f"  Response: {json.dumps(resp)[:300] if isinstance(resp, dict) else str(resp)[:300]}")
+
+    order_id = (resp.get("orderID") or resp.get("orderId") or resp.get("id")) if isinstance(resp, dict) else None
+    success  = bool(order_id) or (isinstance(resp, dict) and resp.get("success"))
+    if not success:
+        print(f"  [error] Global order rejected: {resp}")
+        return 0.0
+
+    placed_bets[token] = {"orderId": order_id, "player": player, "price": bid_price,
+                          "quantity": size_shares, "placed_at": datetime.now().isoformat()}
+    append_trade_log({
+        "ts":            datetime.now().isoformat(timespec="seconds"),
+        "player":        player,
+        "opponent":      opponent,
+        "slug":          signal.get("slug", ""),
+        "bid_price":     bid_price,
+        "bet_size":      bet_size,
+        "quantity":      size_shares,
+        "holders":       signal.get("holders", []),
+        "holders_count": n_holders,
+        "smart_money":   signal.get("total_size", 0),
+        "edge_pct":      edge_pct,
+        "kelly_raw":     kelly_bet_size(p_pro, bid_price),
+        "filled":        True,
+        "order_id":      order_id,
+        "venue":         "global",
+    })
+    notify(
+        f"Bet placed (global): {player}",
+        f"${bet_size:.0f} on {player} vs {opponent} @ {bid_price:.0%}\n"
+        f"{n_holders} pros agreeing, wins ${profit:.2f}\n{signal.get('title','')}"
+    )
+    print(f"  Order accepted: {order_id}")
+    return bet_size
+
+
 # ── main loop ───────────────────────────────────────────────────────────────
 
 def load_positions() -> dict:
@@ -630,22 +815,30 @@ def check():
     print(f"{'='*60}")
 
     # Reload existing positions every cycle so container restarts don't double-bet
-    positions = load_positions()
-    existing  = set(positions.keys())
-    for slug in existing:
-        placed_bets.setdefault(slug, {"loaded": True})
-    rg_positions  = [s for s in existing if is_rg_slug(s)]
-    open_exposure = total_exposure(positions)
-    print(f"  Holding {len(existing)} PMUS positions total; {len(rg_positions)} are tennis "
-          f"(${open_exposure:.2f} RG exposure of ${MAX_EXPOSURE_USD:.2f} cap)")
+    matches = None
+    if EXEC_VENUE == "global":
+        positions = load_positions_global()        # keyed by token id
+        existing  = set(positions.keys())
+        for tok in existing:
+            placed_bets.setdefault(tok, {"loaded": True})
+        open_exposure = exposure_global(positions)
+        print(f"  [GLOBAL] Holding {len(existing)} positions on polymarket.com "
+              f"(${open_exposure:.2f} RG exposure of ${MAX_EXPOSURE_USD:.2f} cap)")
+    else:
+        positions = load_positions()
+        existing  = set(positions.keys())
+        for slug in existing:
+            placed_bets.setdefault(slug, {"loaded": True})
+        rg_positions  = [s for s in existing if is_rg_slug(s)]
+        open_exposure = total_exposure(positions)
+        print(f"  Holding {len(existing)} PMUS positions total; {len(rg_positions)} are tennis "
+              f"(${open_exposure:.2f} RG exposure of ${MAX_EXPOSURE_USD:.2f} cap)")
 
-    # Fetch the RG market universe once per cycle (used for both resolution
-    # tracking and signal placement).
-    matches = fetch_all_rg_matches()
-    print(f"\n  Fetched {len(matches)} active RG matches on Polymarket US")
-
-    # Detect & record any bets that have resolved since last cycle.
-    track_resolutions(matches, existing)
+        # Fetch the RG market universe once per cycle (PMUS only: used for both
+        # resolution tracking and the player->slug market lookup).
+        matches = fetch_all_rg_matches()
+        print(f"\n  Fetched {len(matches)} active RG matches on Polymarket US")
+        track_resolutions(matches, existing)
 
     signals = get_smart_money_signals()
     if not signals:
@@ -674,7 +867,10 @@ def check():
         print(f"\n  Signal: {s['player']} @ {s['prob']:.0%}  |  "
               f"{len(s['holders'])} pros (${s['total_size']:,.0f}): {holders}")
         print(f"    Match: {s['title'][:60]}")
-        spent = place_bet(s, matches, budget_left)
+        if EXEC_VENUE == "global":
+            spent = place_bet_global(s, budget_left)
+        else:
+            spent = place_bet(s, matches, budget_left)
         if spent > 0:
             placed += 1
             budget_left -= spent
@@ -684,14 +880,17 @@ def check():
 
 
 if __name__ == "__main__":
-    if not PM_KEY_ID or not PM_SECRET:
+    if EXEC_VENUE == "global":
+        if not PM_GLOBAL_KEY or not PM_GLOBAL_FUNDER:
+            print("ERROR: EXEC_VENUE=global needs PM_GLOBAL_KEY and PM_GLOBAL_FUNDER env vars.")
+            sys.exit(1)
+    elif not PM_KEY_ID or not PM_SECRET:
         print("ERROR: Set PM_KEY_ID and PM_SECRET environment variables.")
         print("Example: $env:PM_KEY_ID='your-key-id'; $env:PM_SECRET='your-secret'")
         sys.exit(1)
 
-    print("Polymarket US Auto-Trader starting...")
-    print(f"Key: {PM_KEY_ID[:8]}...")
-    print(f"Secret length: {len(PM_SECRET)} chars")
+    print("Polymarket Auto-Trader starting...")
+    print(f"Execution venue: {EXEC_VENUE.upper()}")
     print(f"Bankroll: ${BANKROLL_USD:.2f}")
     if DRY_RUN:
         print("*** DRY RUN MODE — no real orders will be placed ***")
@@ -706,15 +905,27 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[warn] dashboard failed to start: {e}")
 
-    # Quick auth check on startup — try documented endpoint
-    for path in ("/v1/portfolio/positions", "/v1/account", "/v1/account/balance", "/v1/portfolio/balance"):
-        status, resp = _us_get(path)
-        print(f"  GET {path} -> [{status}] {json.dumps(resp)[:200]}")
-        if status == 200:
-            print(f"Auth OK via {path}")
-            break
+    # Startup auth check
+    if EXEC_VENUE == "global":
+        print(f"Funder (proxy): {PM_GLOBAL_FUNDER[:6]}...{PM_GLOBAL_FUNDER[-4:]}")
+        try:
+            get_clob()
+            print("CLOB auth OK (api creds derived)")
+            pos = load_positions_global()
+            print(f"  Global wallet holds {len(pos)} positions; "
+                  f"${exposure_global(pos):.2f} RG exposure")
+        except Exception as e:
+            print(f"[warn] CLOB init failed: {e} — will retry inside loop")
     else:
-        print("All auth endpoints failed. Continuing anyway to run trade loop...")
+        print(f"Key: {PM_KEY_ID[:8]}...  Secret length: {len(PM_SECRET)} chars")
+        for path in ("/v1/portfolio/positions", "/v1/account", "/v1/account/balance", "/v1/portfolio/balance"):
+            status, resp = _us_get(path)
+            print(f"  GET {path} -> [{status}] {json.dumps(resp)[:200]}")
+            if status == 200:
+                print(f"Auth OK via {path}")
+                break
+        else:
+            print("All auth endpoints failed. Continuing anyway to run trade loop...")
     print()
 
     while True:
