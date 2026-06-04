@@ -385,6 +385,25 @@ def get_smart_money_signals() -> list[dict]:
     return signals
 
 
+def one_signal_per_match(signals: list[dict]) -> list[dict]:
+    """Never bet both sides of the same match. When the pros are split across a
+    match's two outcomes, keep only the higher-conviction side (most holders, then
+    most smart money). Betting both guarantees a loss (you'd pay >100% for a 100%
+    payout)."""
+    best: dict = {}
+    for s in signals:
+        key = s.get("conditionId") or s.get("title")
+        cur = best.get(key)
+        rank = (len(s["holders"]), s["total_size"])
+        if cur is None or rank > (len(cur["holders"]), cur["total_size"]):
+            best[key] = s
+    kept = list(best.values())
+    if len(kept) < len(signals):
+        dropped = len(signals) - len(kept)
+        print(f"  [dedupe] Dropped {dropped} opposite-side signal(s) — one bet per match")
+    return kept
+
+
 # ── US market lookup ────────────────────────────────────────────────────────
 
 def get_us_market_by_slug(slug: str) -> dict | None:
@@ -844,6 +863,9 @@ def check():
     if not signals:
         print("  No Roland Garros smart money signals right now.")
         return
+
+    # Never bet both sides of one match — keep the higher-conviction side.
+    signals = one_signal_per_match(signals)
 
     # Sort by prob — value bets first (lower prob = higher payout)
     signals.sort(key=lambda s: s["prob"])
