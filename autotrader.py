@@ -353,6 +353,14 @@ def get_smart_money_signals() -> list[dict]:
                 title = r.get("title", "")
                 if not any(k.lower() in title.lower() for k in KEYWORDS):
                     continue
+                # Head-to-head matches ONLY. Tournament-winner / outright futures
+                # ("Will X win the French Open?") also match the RG keyword but are
+                # Yes/No markets, not a match — never bet those.
+                tl = title.lower()
+                if " vs " not in tl and " vs. " not in tl:
+                    continue
+                if (r.get("outcome", "") or "").strip().lower() in ("yes", "no"):
+                    continue
                 if (r.get("timestamp", 0) or 0) < cutoff:
                     continue
                 price = float(r.get("price", 0) or 0)
