@@ -130,11 +130,7 @@ TENNIS_TRADERS = [
     ("LBAIsport",       "0xcb1bcdee78e4b50e64aabb109cf4be33dbb569f2"),
     ("cigarettes",      "0xd218e474776403a330142299f7796e8ba32eb5c9"),
 ]
-# Which tournament to track. The ONLY tournament-specific setting — everything
-# else (traders, sizing, gates, atp/wta market detection) is surface-agnostic.
-# Switch tournaments with the MATCH_KEYWORDS env var (comma-separated), no code
-# change needed. Defaults to Wimbledon (next slam after Roland Garros 2026).
-KEYWORDS    = [k.strip() for k in os.environ.get("MATCH_KEYWORDS", "Wimbledon").split(",") if k.strip()]
+KEYWORDS    = ["Roland Garros", "Roland-Garros", "French Open"]
 MOBILE_UA   = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"
 
 placed_bets: dict = {}   # market_slug -> order info
@@ -924,7 +920,7 @@ def check():
 
     signals = get_smart_money_signals()
     if not signals:
-        print(f"  No {KEYWORDS[0]} smart money signals right now.")
+        print("  No Roland Garros smart money signals right now.")
         return
 
     # Never bet both sides of one match — keep the higher-conviction side.
