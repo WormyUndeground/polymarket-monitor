@@ -313,8 +313,10 @@ def render_html(state):
         for h in reversed(history):
             pnl = float(h.get("pnl", 0))
             hist_total += pnl
+            # Win rate counts only decided bets — clear wins and losses. Anything
+            # ambiguous (BREAK EVEN, REVIEW, etc.) is excluded from the denominator.
             result = h.get("result", "").upper()
-            if result != "BREAK EVEN":
+            if result in ("WON", "LOST"):
                 hist_decided += 1
                 if result == "WON":
                     hist_wins += 1
