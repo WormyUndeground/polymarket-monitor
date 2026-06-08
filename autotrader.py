@@ -210,8 +210,11 @@ def track_resolutions(matches: list[dict], open_slugs: set[str]):
     # latest placement per slug (most recent bet on that market)
     by_slug = {}
     for t in placements:
-        if t.get("slug"):
-            by_slug[t["slug"]] = t
+        slug = t.get("slug")
+        # Only track real head-to-head tennis bets — never futures/outright slugs,
+        # so a stray non-match bet can't get auto-resolved with a bogus P&L.
+        if slug and is_rg_slug(slug):
+            by_slug[slug] = t
 
     newly = []
     for slug, t in by_slug.items():

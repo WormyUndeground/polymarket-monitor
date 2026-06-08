@@ -294,5 +294,13 @@
     "cost": "$4.93",
     "result": "LOST",
     "pnl": -4.93
+  },
+  {
+    "date": "2026-06-07",
+    "player": "Alexander Zverev",
+    "match": "French Open Winner (futures) - manually closed, broke even",
+    "cost": "$8.00",
+    "result": "BREAK EVEN",
+    "pnl": 0.0
   }
 ]
