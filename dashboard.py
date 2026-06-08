@@ -252,9 +252,29 @@ def load_resolved_trades():
         return []
 
 
+# Manual corrections to auto-resolved bets. The resolution tracker classifies a
+# bet by its last-seen price, so a position SOLD by hand before it settled can be
+# mis-logged (e.g. a break-even sale recorded as a loss). Each correction matches
+# by player + date and overrides the result/pnl shown on the dashboard.
+CLOSED_TRADE_CORRECTIONS = [
+    {"player": "Flavio Cobolli", "date": "2026-06-07",
+     "result": "BREAK EVEN", "pnl": 0.0},
+]
+
+
+def _apply_corrections(history):
+    for h in history:
+        for c in CLOSED_TRADE_CORRECTIONS:
+            if h.get("player") == c["player"] and h.get("date") == c["date"]:
+                h["result"] = c["result"]
+                h["pnl"]    = c["pnl"]
+    return history
+
+
 def load_closed_history():
     """Hand-entered history + auto-resolved bot bets, oldest-first by date."""
     combined = load_manual_history() + load_resolved_trades()
+    combined = _apply_corrections(combined)
     return sorted(combined, key=lambda h: h.get("date", ""))
 
 
