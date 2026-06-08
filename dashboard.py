@@ -288,12 +288,16 @@ def render_html(state):
     hist_html = ""
     hist_total = 0.0
     hist_wins  = 0
+    hist_decided = 0   # win-rate denominator: excludes break-evens
     if history:
         for h in reversed(history):
             pnl = float(h.get("pnl", 0))
             hist_total += pnl
-            if h.get("result", "").upper() == "WON":
-                hist_wins += 1
+            result = h.get("result", "").upper()
+            if result != "BREAK EVEN":
+                hist_decided += 1
+                if result == "WON":
+                    hist_wins += 1
             c = "#22c55e" if pnl >= 0 else "#ef4444"
             s = "+" if pnl >= 0 else ""
             hist_html += (
@@ -306,14 +310,14 @@ def render_html(state):
                 f"<td style='color:{c}'>{s}${pnl:.2f}</td>"
                 f"</tr>"
             )
-        win_rate = (hist_wins / len(history) * 100) if history else 0
+        win_rate = (hist_wins / hist_decided * 100) if hist_decided else 0
         hist_summary = (
             f"<div class='stats'>"
             f"<div class='card'><div class='label'>Closed P&L</div>"
             f"<div class='value' style='color:{'#22c55e' if hist_total >= 0 else '#ef4444'}'>"
             f"{'+' if hist_total >= 0 else ''}${hist_total:.2f}</div></div>"
             f"<div class='card'><div class='label'>Win Rate</div>"
-            f"<div class='value'>{hist_wins}/{len(history)} ({win_rate:.0f}%)</div></div>"
+            f"<div class='value'>{hist_wins}/{hist_decided} ({win_rate:.0f}%)</div></div>"
             f"</div>"
         )
     else:
